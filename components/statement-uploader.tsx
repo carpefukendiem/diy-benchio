@@ -135,8 +135,12 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             body: formData,
           })
 
+          console.log(`[v0] Upload response status for ${file.name}:`, response.status)
+
           if (response.ok) {
             const data = await response.json()
+            console.log(`[v0] Upload response data for ${file.name}:`, data)
+
             processedFiles.push({
               fileName: file.name,
               month: data.month || "Unknown",
@@ -146,7 +150,9 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             })
             allTransactions = allTransactions.concat(data.transactions || [])
           } else {
-            const errorData = await response.json()
+            const errorText = await response.text()
+            console.error(`[v0] Failed to process ${file.name}. Status: ${response.status}, Error:`, errorText)
+
             processedFiles.push({
               fileName: file.name,
               month: "Error",
@@ -154,7 +160,6 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
               transactions: [],
               success: false,
             })
-            console.error(`[v0] Failed to process ${file.name}:`, errorData.error)
           }
         } catch (error) {
           console.error(`[v0] Error processing ${file.name}:`, error)
@@ -168,10 +173,15 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         }
       }
 
+      console.log(`[v0] Bulk upload complete. Total transactions extracted: ${allTransactions.length}`)
+      console.log(`[v0] Processed files:`, processedFiles)
+
       const successCount = processedFiles.filter((f) => f.success).length
       const failedCount = processedFiles.filter((f) => !f.success).length
 
       if (allTransactions.length > 0) {
+        console.log(`[v0] Setting pendingReview with ${allTransactions.length} transactions`)
+
         setPendingReview({
           transactions: allTransactions,
           accountName,
@@ -184,9 +194,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
           description: `${successCount} files uploaded successfully${failedCount > 0 ? `, ${failedCount} failed` : ""}. Review ${allTransactions.length} transactions.`,
         })
       } else {
+        console.error(`[v0] No transactions extracted from ${files.length} files`)
         toast({
           title: "Upload Failed",
-          description: "No files could be processed successfully. Please check file format.",
+          description: `No transactions could be extracted. Processed: ${successCount} succeeded, ${failedCount} failed. Check console for details.`,
           variant: "destructive",
         })
       }
@@ -196,7 +207,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       console.error("[v0] Bulk upload error:", error)
       toast({
         title: "Upload Error",
-        description: "An error occurred while uploading statements",
+        description: "An error occurred while uploading statements. Check console for details.",
         variant: "destructive",
       })
     } finally {
