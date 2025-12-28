@@ -10,6 +10,7 @@ import { InteractiveReports } from "@/components/interactive-reports"
 import { EthereumFix } from "@/components/ethereum-fix"
 import { StatementUploader } from "@/components/statement-uploader"
 import { TaxWizard } from "@/components/tax-wizard"
+import { BusinessSelector } from "@/components/business-selector"
 import {
   DollarSign,
   TrendingUp,
@@ -20,6 +21,7 @@ import {
   TrendingDown,
   Shield,
   Building2,
+  Plus,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -47,124 +49,200 @@ interface UploadedStatement {
   status: "processed" | "error"
 }
 
+interface BusinessData {
+  id: string
+  profile: TaxProfile
+  uploadedStatements: UploadedStatement[]
+  transactions: Transaction[]
+  lastSync: string
+}
+
 interface TaxProfile {
-  name: string
-  businessType: "hair_stylist" | "ghl_agency" | "both"
-  filingStatus: "married_joint" | "married_separate" | "single"
-  hasEmployees: boolean
-  businessStructure: "sole_proprietor" | "llc" | "s_corp" | "partnership"
-  estimatedIncome: string
-  specialDeductions: string[]
-  clientCount?: string
-  serviceTypes?: string[]
+  businessName: string
+  businessType: string
+  entityType: string
+  deductions: string[]
 }
 
 export default function CaliforniaBusinessAccounting() {
-  const [taxProfile, setTaxProfile] = useState<TaxProfile | null>(null)
+  const [businesses, setBusinesses] = useState<BusinessData[]>([])
+  const [currentBusinessId, setCurrentBusinessId] = useState<string>("")
   const [showWizard, setShowWizard] = useState(true)
-  const [uploadedStatements, setUploadedStatements] = useState<UploadedStatement[]>([])
-  const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [lastSync, setLastSync] = useState<string>("")
-  const [dateRange, setDateRange] = useState({ start: "2025-01-01", end: "2025-12-31" })
   const { toast } = useToast()
 
-  // Check if user has completed setup
-  useEffect(() => {
-    const savedProfile = localStorage.getItem("taxProfile")
-    if (savedProfile) {
-      setTaxProfile(JSON.parse(savedProfile))
-      setShowWizard(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    const allTransactions = uploadedStatements.flatMap((statement) => statement.transactions)
-    setTransactions(allTransactions)
-  }, [uploadedStatements])
+  const [activeTab, setActiveTab] = useState("statements")
+  const currentBusiness = businesses.find((b) => b.id === currentBusinessId)
 
   const handleWizardComplete = (profile: TaxProfile) => {
-    setTaxProfile(profile)
+    const newBusiness: BusinessData = {
+      id: Date.now().toString(),
+      profile: {
+        businessName: profile.businessName,
+        businessType: profile.businessType,
+        entityType: profile.entityType,
+        deductions: profile.deductions,
+      },
+      uploadedStatements: [],
+      transactions: [],
+      lastSync: "",
+    }
+
+    setBusinesses((prev) => [...prev, newBusiness])
+    setCurrentBusinessId(newBusiness.id)
     setShowWizard(false)
-    localStorage.setItem("taxProfile", JSON.stringify(profile))
+
     toast({
-      title: "Accounting System Ready",
-      description: `Welcome ${profile.name}! Your California business tax minimization system is configured.`,
+      title: "Business Added Successfully",
+      description: `${profile.businessName} is now configured for tax optimization.`,
     })
   }
 
-  const updateTransaction = async (transactionId: string, updates: Partial<Transaction>) => {
-    try {
-      const response = await fetch("/api/transactions/update", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_id: transactionId, updates }),
-      })
+  const handleAddBusiness = () => {
+    setShowWizard(true)
+  }
 
-      if (response.ok) {
-        setTransactions((prev) => prev.map((t) => (t.id === transactionId ? { ...t, ...updates } : t)))
-      }
-    } catch (error) {
-      console.error("Error updating transaction:", error)
-    }
+  const handleSelectBusiness = (id: string) => {
+    setCurrentBusinessId(id)
+    toast({
+      title: "Switched Business",
+      description: `Now viewing ${businesses.find((b) => b.id === id)?.profile.businessName}`,
+    })
+  }
+
+  const updateCurrentBusiness = (updates: Partial<BusinessData>) => {
+    setBusinesses((prev) => prev.map((b) => (b.id === currentBusinessId ? { ...b, ...updates } : b)))
+  }
+
+  const updateTransaction = async (transactionId: string, updates: Partial<Transaction>) => {
+    if (!currentBusiness) return
+
+    const updatedTransactions = currentBusiness.transactions.map((t) =>
+      t.id === transactionId ? { ...t, ...updates } : t,
+    )
+    updateCurrentBusiness({ transactions: updatedTransactions })
   }
 
   const bulkUpdateTransactions = async (updates: Array<{ id: string; updates: Partial<Transaction> }>) => {
-    try {
-      const response = await fetch("/api/transactions/bulk-update", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates }),
-      })
+    if (!currentBusiness) return
 
-      if (response.ok) {
-        updates.forEach(({ id, updates: transactionUpdates }) => {
-          setTransactions((prev) => prev.map((t) => (t.id === id ? { ...t, ...transactionUpdates } : t)))
-        })
-      }
-    } catch (error) {
-      console.error("Error bulk updating transactions:", error)
-    }
+    let updatedTransactions = [...currentBusiness.transactions]
+    updates.forEach(({ id, updates: transactionUpdates }) => {
+      updatedTransactions = updatedTransactions.map((t) => (t.id === id ? { ...t, ...transactionUpdates } : t))
+    })
+    updateCurrentBusiness({ transactions: updatedTransactions })
   }
 
-  const resetWizard = () => {
-    localStorage.removeItem("taxProfile")
-    setTaxProfile(null)
-    setShowWizard(true)
-    setUploadedStatements([])
-    setTransactions([])
+  const handleStatementsUpdate = (statements: UploadedStatement[]) => {
+    const allTransactions = statements.flatMap((statement) => statement.transactions)
+    updateCurrentBusiness({
+      uploadedStatements: statements,
+      transactions: allTransactions,
+      lastSync: new Date().toLocaleString(),
+    })
   }
 
-  const totalBalance = uploadedStatements.reduce((sum, statement) => {
-    const statementBalance = statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
-    return sum + statementBalance
-  }, 0)
+  const handleContinueToTransactions = () => {
+    setActiveTab("transactions")
+    toast({
+      title: "Ready to Process",
+      description: "Review and categorize your transactions for maximum tax deductions",
+    })
+  }
 
-  const totalRevenue = transactions.filter((t) => t.isIncome).reduce((sum, t) => sum + t.amount, 0)
+  const totalBalance = currentBusiness
+    ? currentBusiness.uploadedStatements.reduce((sum, statement) => {
+        const statementBalance = statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
+        return sum + statementBalance
+      }, 0)
+    : 0
 
-  const totalExpenses = transactions.filter((t) => !t.isIncome).reduce((sum, t) => sum + t.amount, 0)
+  const totalRevenue = currentBusiness
+    ? currentBusiness.transactions.filter((t) => t.isIncome).reduce((sum, t) => sum + t.amount, 0)
+    : 0
+
+  const totalExpenses = currentBusiness
+    ? currentBusiness.transactions.filter((t) => !t.isIncome).reduce((sum, t) => sum + t.amount, 0)
+    : 0
 
   const taxSavings = totalExpenses * 0.35
-
   const estimatedTaxLiability = Math.max(0, (totalRevenue - totalExpenses) * 0.35)
 
   const getBusinessTypeIcon = () => {
-    if (taxProfile?.businessType === "ghl_agency") return <Megaphone className="h-5 w-5 text-primary" />
-    if (taxProfile?.businessType === "hair_stylist") return <Sparkles className="h-5 w-5 text-pink-500" />
+    if (!currentBusiness) return <Building2 className="h-5 w-5" />
+    if (currentBusiness.profile.businessType === "gohighlevel-agency")
+      return <Megaphone className="h-5 w-5 text-primary" />
+    if (currentBusiness.profile.businessType === "hair-stylist") return <Sparkles className="h-5 w-5 text-pink-500" />
     return <Building2 className="h-5 w-5 text-purple-500" />
   }
 
   const getBusinessTypeTitle = () => {
-    if (taxProfile?.businessType === "ghl_agency") return "Digital Marketing Agency"
-    if (taxProfile?.businessType === "hair_stylist") return "Hair Stylist Business"
-    return "Multi-Business"
+    if (!currentBusiness) return ""
+    if (currentBusiness.profile.businessType === "gohighlevel-agency") return "Digital Marketing Agency"
+    if (currentBusiness.profile.businessType === "hair-stylist") return "Hair Stylist Business"
+    return "Business"
   }
+
+  useEffect(() => {
+    const savedBusinesses = localStorage.getItem("businesses")
+    if (savedBusinesses) {
+      const parsedBusinesses = JSON.parse(savedBusinesses)
+      setBusinesses(parsedBusinesses)
+      if (parsedBusinesses.length > 0) {
+        const lastBusinessId = localStorage.getItem("lastBusinessId")
+        setCurrentBusinessId(lastBusinessId || parsedBusinesses[0].id)
+        setShowWizard(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (businesses.length > 0) {
+      localStorage.setItem("businesses", JSON.stringify(businesses))
+    }
+  }, [businesses])
+
+  useEffect(() => {
+    if (currentBusinessId) {
+      localStorage.setItem("lastBusinessId", currentBusinessId)
+    }
+  }, [currentBusinessId])
 
   if (showWizard) {
     return (
       <>
         <EthereumFix />
-        <TaxWizard onComplete={handleWizardComplete} />
+        <div className="min-h-screen bg-background">
+          {businesses.length > 0 && (
+            <div className="container mx-auto px-4 py-4">
+              <Button variant="ghost" onClick={() => setShowWizard(false)}>
+                ← Back to Dashboard
+              </Button>
+            </div>
+          )}
+          <TaxWizard onComplete={handleWizardComplete} />
+        </div>
+      </>
+    )
+  }
+
+  if (!currentBusiness) {
+    return (
+      <>
+        <EthereumFix />
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <Card className="w-full max-w-md">
+            <CardContent className="pt-6 text-center">
+              <Building2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-semibold mb-2">No Business Selected</h3>
+              <p className="text-muted-foreground mb-4">Add a business to get started</p>
+              <Button onClick={handleAddBusiness}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Business
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </>
     )
   }
@@ -174,13 +252,12 @@ export default function CaliforniaBusinessAccounting() {
       <EthereumFix />
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
-          {/* Header */}
           <div className="mb-8">
             <div className="flex justify-between items-center">
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   {getBusinessTypeIcon()}
-                  <h1 className="text-4xl font-bold">{taxProfile?.name}'s Business Accounting</h1>
+                  <h1 className="text-4xl font-bold">{currentBusiness.profile.businessName}</h1>
                 </div>
                 <p className="text-lg text-muted-foreground flex items-center gap-2">
                   {getBusinessTypeTitle()} • California Tax Optimization
@@ -189,18 +266,25 @@ export default function CaliforniaBusinessAccounting() {
                     Tax Minimization Active
                   </Badge>
                 </p>
-                {lastSync && <p className="text-sm text-muted-foreground mt-1">Last synced: {lastSync}</p>}
+                {currentBusiness.lastSync && (
+                  <p className="text-sm text-muted-foreground mt-1">Last synced: {currentBusiness.lastSync}</p>
+                )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={resetWizard}>
-                  <Calculator className="h-4 w-4 mr-2" />
-                  Reconfigure
-                </Button>
+                <BusinessSelector
+                  businesses={businesses.map((b) => ({
+                    id: b.id,
+                    name: b.profile.businessName,
+                    type: b.profile.businessType,
+                  }))}
+                  currentBusinessId={currentBusinessId}
+                  onSelectBusiness={handleSelectBusiness}
+                  onAddBusiness={handleAddBusiness}
+                />
               </div>
             </div>
           </div>
 
-          {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -208,9 +292,9 @@ export default function CaliforniaBusinessAccounting() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{uploadedStatements.length}</div>
+                <div className="text-2xl font-bold">{currentBusiness.uploadedStatements.length}</div>
                 <p className="text-xs text-muted-foreground">
-                  {uploadedStatements.length === 0 ? "Upload statements" : "Statements processed"}
+                  {currentBusiness.uploadedStatements.length === 0 ? "Upload statements" : "Statements processed"}
                 </p>
               </CardContent>
             </Card>
@@ -245,7 +329,7 @@ export default function CaliforniaBusinessAccounting() {
               <CardContent>
                 <div className="text-2xl font-bold text-blue-600">${totalExpenses.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
-                  {transactions.filter((t) => !t.isIncome).length} transactions
+                  {currentBusiness.transactions.filter((t) => !t.isIncome).length} transactions
                 </p>
               </CardContent>
             </Card>
@@ -273,8 +357,7 @@ export default function CaliforniaBusinessAccounting() {
             </Card>
           </div>
 
-          {/* Main Content */}
-          <Tabs defaultValue="statements" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="statements">Statements</TabsTrigger>
               <TabsTrigger value="transactions">Transaction Processing</TabsTrigger>
@@ -283,11 +366,15 @@ export default function CaliforniaBusinessAccounting() {
             </TabsList>
 
             <TabsContent value="statements" className="space-y-6">
-              <StatementUploader existingStatements={uploadedStatements} onStatementsUpdate={setUploadedStatements} />
+              <StatementUploader
+                existingStatements={currentBusiness.uploadedStatements}
+                onStatementsUpdate={handleStatementsUpdate}
+                onContinue={handleContinueToTransactions}
+              />
             </TabsContent>
 
             <TabsContent value="transactions" className="space-y-6">
-              {transactions.length === 0 ? (
+              {currentBusiness.transactions.length === 0 ? (
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FileText className="h-12 w-12 text-muted-foreground mb-4" />
@@ -300,7 +387,7 @@ export default function CaliforniaBusinessAccounting() {
                 </Card>
               ) : (
                 <InteractiveTransactionsList
-                  transactions={transactions}
+                  transactions={currentBusiness.transactions}
                   onUpdateTransaction={updateTransaction}
                   onBulkUpdate={bulkUpdateTransactions}
                   onRefresh={() => {}}
@@ -310,7 +397,7 @@ export default function CaliforniaBusinessAccounting() {
             </TabsContent>
 
             <TabsContent value="reports" className="space-y-6">
-              {transactions.length === 0 ? (
+              {currentBusiness.transactions.length === 0 ? (
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <TrendingUp className="h-12 w-12 text-muted-foreground mb-4" />
@@ -323,9 +410,9 @@ export default function CaliforniaBusinessAccounting() {
                 </Card>
               ) : (
                 <InteractiveReports
-                  transactions={transactions}
+                  transactions={currentBusiness.transactions}
                   onUpdateTransaction={updateTransaction}
-                  dateRange={dateRange}
+                  dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
                 />
               )}
             </TabsContent>
@@ -336,15 +423,15 @@ export default function CaliforniaBusinessAccounting() {
                   <CardHeader>
                     <CardTitle>Deduction Tracking & Optimization</CardTitle>
                     <CardDescription>
-                      Monitor your {taxProfile?.specialDeductions?.length || 0} configured deduction categories to
+                      Monitor your {currentBusiness.profile.deductions?.length || 0} configured deduction categories to
                       maximize tax savings and minimize your California tax liability.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {taxProfile?.specialDeductions && taxProfile.specialDeductions.length > 0 ? (
+                    {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {taxProfile.specialDeductions.map((deduction) => {
-                          const relatedTransactions = transactions.filter(
+                        {currentBusiness.profile.deductions.map((deduction) => {
+                          const relatedTransactions = currentBusiness.transactions.filter(
                             (t) =>
                               !t.isIncome &&
                               (t.category.toLowerCase().includes(deduction.toLowerCase()) ||
@@ -352,7 +439,7 @@ export default function CaliforniaBusinessAccounting() {
                                 deduction.toLowerCase().includes(t.category.toLowerCase())),
                           )
                           const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
-                          const savings = Math.round(totalAmount * 0.35) // CA + Federal rate
+                          const savings = Math.round(totalAmount * 0.35)
 
                           return (
                             <Card key={deduction} className="hover:shadow-md transition-shadow">
@@ -373,7 +460,7 @@ export default function CaliforniaBusinessAccounting() {
                     ) : (
                       <div className="text-center py-8">
                         <p className="text-muted-foreground">
-                          No deduction categories configured. Reconfigure your system to set up deduction tracking.
+                          No deduction categories configured. Add deduction tracking when setting up your business.
                         </p>
                       </div>
                     )}
@@ -396,7 +483,6 @@ export default function CaliforniaBusinessAccounting() {
                           <span className="font-medium">Estimated Tax Savings:</span>
                           <span className="font-bold text-green-600">${taxSavings.toLocaleString()}</span>
                         </div>
-                        {/* Placeholder for other metrics if needed */}
                       </div>
                       <div className="space-y-3">
                         <h4 className="font-semibold">Optimization Tips:</h4>
