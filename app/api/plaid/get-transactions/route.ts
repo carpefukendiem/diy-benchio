@@ -1,16 +1,18 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid"
+import { Configuration, PlaidApi, PlaidEnvironments } from "plaid"
 
 export async function POST(request: NextRequest) {
   try {
-    const { user_id } = await request.json()
+    const { access_token, start_date, end_date } = await request.json()
 
-    // Check if Plaid credentials are configured
+    if (!access_token) {
+      return NextResponse.json({ error: "Access token is required" }, { status: 400 })
+    }
+
     const clientId = process.env.PLAID_CLIENT_ID
     const secret = process.env.PLAID_SECRET
 
     if (!clientId || !secret) {
-      console.error("Plaid credentials not configured")
       return NextResponse.json(
         {
           error: "Plaid not configured",
@@ -32,28 +34,24 @@ export async function POST(request: NextRequest) {
 
     const client = new PlaidApi(configuration)
 
-    const response = await client.linkTokenCreate({
-      user: {
-        client_user_id: user_id,
-      },
-      client_name: "DIY Accounting Solution",
-      products: [Products.Transactions],
-      country_codes: [CountryCode.Us],
-      language: "en",
-      redirect_uri: process.env.PLAID_REDIRECT_URI,
+    const response = await client.transactionsGet({
+      access_token,
+      start_date: start_date || "2025-01-01",
+      end_date: end_date || new Date().toISOString().split("T")[0],
     })
 
-    console.log("[v0] Created link token for user:", user_id)
+    console.log("[v0] Retrieved", response.data.transactions.length, "transactions")
 
     return NextResponse.json({
-      link_token: response.data.link_token,
-      expiration: response.data.expiration,
+      transactions: response.data.transactions,
+      accounts: response.data.accounts,
+      total_transactions: response.data.total_transactions,
     })
   } catch (error) {
-    console.error("[v0] Error creating link token:", error)
+    console.error("[v0] Error fetching transactions:", error)
     return NextResponse.json(
       {
-        error: "Failed to create link token",
+        error: "Failed to fetch transactions",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

@@ -127,8 +127,9 @@ export default function CaliforniaBusinessAccounting() {
 
   const handlePlaidSuccess = async (publicToken: string, metadata: any) => {
     setIsLoading(true)
+    console.log("[v0] Plaid success, exchanging public token")
     try {
-      const response = await fetch("/api/plaid/exchange-token", {
+      const response = await fetch("/api/plaid/exchange-public-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ public_token: publicToken }),
@@ -136,15 +137,24 @@ export default function CaliforniaBusinessAccounting() {
 
       if (response.ok) {
         const data = await response.json()
+        console.log("[v0] Successfully exchanged token, received accounts:", data.accounts.length)
         setConnectedAccounts((prev) => [...prev, ...data.accounts])
         await fetchYearToDateTransactions(data.access_token)
         toast({
-          title: "Account Connected! ✅",
+          title: "Account Connected",
           description: "Syncing your financial data for tax optimization...",
+        })
+      } else {
+        const errorData = await response.json()
+        console.error("[v0] Failed to exchange token:", errorData)
+        toast({
+          title: "Connection Error",
+          description: errorData.details || "Failed to connect account. Please try again.",
+          variant: "destructive",
         })
       }
     } catch (error) {
-      console.error("Error connecting account:", error)
+      console.error("[v0] Error connecting account:", error)
       toast({
         title: "Connection Error",
         description: "Failed to connect account. Please try again.",
