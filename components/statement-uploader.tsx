@@ -51,20 +51,14 @@ const MONTHS = [
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
   const [accountType, setAccountType] = useState<"bank" | "credit_card">("bank")
-  const [selectedMonth, setSelectedMonth] = useState("")
-  const [selectedYear, setSelectedYear] = useState("2025")
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
-  const [uploadQueue, setUploadQueue] = useState<any[]>([])
-  const [processingIndex, setProcessingIndex] = useState(0)
   const [pendingReview, setPendingReview] = useState<{
     transactions: any[]
     accountName: string
     accountType: "bank" | "credit_card"
-    month: string
-    year: string
-    fileName: string
+    files: Array<{ fileName: string; month: string; year: string; transactions: any[] }>
   } | null>(null)
   const { toast } = useToast()
 
@@ -102,23 +96,30 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     const files = event.target.files
     if (!files || files.length === 0) return
 
-    if (!accountName || !selectedMonth) {
+    if (!accountName) {
       toast({
         title: "Missing Information",
-        description: "Please fill in account name, month, and year before uploading",
+        description: "Please enter an account name before uploading",
         variant: "destructive",
       })
       return
     }
 
-    console.log(`[v0] Starting bulk upload of ${files.length} files`)
+    console.log(`[v0] Starting bulk upload of ${files.length} files for account: ${accountName}`)
     setIsUploading(true)
 
     try {
       saveAccountName(accountName)
 
-      // Process all files
-      const results = []
+      const processedFiles: Array<{
+        fileName: string
+        month: string
+        year: string
+        transactions: any[]
+        success: boolean
+      }> = []
+      let allTransactions: any[] = []
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         console.log(`[v0] Processing file ${i + 1}/${files.length}: ${file.name}`)
@@ -127,8 +128,6 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         formData.append("file", file)
         formData.append("accountName", accountName)
         formData.append("accountType", accountType)
-        formData.append("month", selectedMonth)
-        formData.append("year", selectedYear)
 
         try {
           const response = await fetch("/api/statements/upload", {
@@ -138,55 +137,56 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
           if (response.ok) {
             const data = await response.json()
-            results.push({
-              success: true,
+            processedFiles.push({
               fileName: file.name,
+              month: data.month || "Unknown",
+              year: data.year || "2025",
               transactions: data.transactions || [],
+              success: true,
             })
+            allTransactions = allTransactions.concat(data.transactions || [])
           } else {
             const errorData = await response.json()
-            results.push({
-              success: false,
+            processedFiles.push({
               fileName: file.name,
-              error: errorData.error,
+              month: "Error",
+              year: "Error",
+              transactions: [],
+              success: false,
             })
+            console.error(`[v0] Failed to process ${file.name}:`, errorData.error)
           }
         } catch (error) {
           console.error(`[v0] Error processing ${file.name}:`, error)
-          results.push({
-            success: false,
+          processedFiles.push({
             fileName: file.name,
-            error: "Upload failed",
+            month: "Error",
+            year: "Error",
+            transactions: [],
+            success: false,
           })
         }
       }
 
-      // Combine all successful transactions for review
-      const allTransactions = results.filter((r) => r.success).flatMap((r) => r.transactions)
-
-      const failedCount = results.filter((r) => !r.success).length
+      const successCount = processedFiles.filter((f) => f.success).length
+      const failedCount = processedFiles.filter((f) => !f.success).length
 
       if (allTransactions.length > 0) {
         setPendingReview({
           transactions: allTransactions,
           accountName,
           accountType,
-          month: selectedMonth,
-          year: selectedYear,
-          fileName: `${files.length} files`,
+          files: processedFiles.filter((f) => f.success),
         })
 
-        if (failedCount > 0) {
-          toast({
-            title: "Partial Upload Success",
-            description: `${results.filter((r) => r.success).length} files processed, ${failedCount} failed`,
-            variant: "default",
-          })
-        }
+        toast({
+          title: "Files Processed",
+          description: `${successCount} files uploaded successfully${failedCount > 0 ? `, ${failedCount} failed` : ""}. Review ${allTransactions.length} transactions.`,
+        })
       } else {
         toast({
           title: "Upload Failed",
-          description: "No files could be processed successfully",
+          description: "No files could be processed successfully. Please check file format.",
           variant: "destructive",
         })
       }
@@ -207,43 +207,58 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   const handleApproveTransactions = (transactions: any[]) => {
     if (!pendingReview) return
 
-    const newStatement: UploadedStatement = {
-      id: `${pendingReview.accountName}-${pendingReview.year}-${pendingReview.month}`,
-      accountName: pendingReview.accountName,
-      accountType: pendingReview.accountType,
-      month: pendingReview.month,
-      year: pendingReview.year,
-      fileName: pendingReview.fileName,
-      uploadDate: new Date().toISOString(),
-      transactions,
-      status: "processed",
-    }
+    const statementsByMonth = new Map<string, any[]>()
 
-    onStatementsUpdate([...existingStatements, newStatement])
+    transactions.forEach((transaction) => {
+      const key = `${transaction.date.substring(0, 7)}` // YYYY-MM format
+      if (!statementsByMonth.has(key)) {
+        statementsByMonth.set(key, [])
+      }
+      statementsByMonth.get(key)!.push(transaction)
+    })
+
+    const newStatements: UploadedStatement[] = Array.from(statementsByMonth.entries()).map(([yearMonth, txns]) => {
+      const [year, monthNum] = yearMonth.split("-")
+      const month = MONTHS[Number.parseInt(monthNum) - 1] || "Unknown"
+
+      return {
+        id: `${pendingReview.accountName}-${year}-${month}-${Date.now()}`,
+        accountName: pendingReview.accountName,
+        accountType: pendingReview.accountType,
+        month,
+        year,
+        fileName: `${pendingReview.files.length} files`,
+        uploadDate: new Date().toISOString(),
+        transactions: txns,
+        status: "processed" as const,
+      }
+    })
+
+    onStatementsUpdate([...existingStatements, ...newStatements])
 
     toast({
-      title: "Statement Imported",
-      description: `${transactions.length} transactions imported successfully`,
+      title: "Statements Imported",
+      description: `${newStatements.length} months with ${transactions.length} total transactions imported`,
     })
 
     setPendingReview(null)
     setAccountName("")
-    setSelectedMonth("")
   }
 
   const handleCancelReview = () => {
     setPendingReview(null)
     toast({
       title: "Import Cancelled",
-      description: "Statement was not imported",
+      description: "Statements were not imported",
     })
   }
 
-  const handleDeleteStatement = (statementId: string) => {
-    onStatementsUpdate(existingStatements.filter((s) => s.id !== statementId))
+  const handleDeleteStatement = (id: string) => {
+    const updatedStatements = existingStatements.filter((statement) => statement.id !== id)
+    onStatementsUpdate(updatedStatements)
     toast({
-      title: "Statement Removed",
-      description: "Statement has been deleted",
+      title: "Statement Deleted",
+      description: "The selected statement has been deleted",
     })
   }
 
@@ -265,15 +280,40 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
   if (pendingReview) {
     return (
-      <TransactionReview
-        transactions={pendingReview.transactions}
-        accountName={pendingReview.accountName}
-        month={pendingReview.month}
-        year={pendingReview.year}
-        fileName={pendingReview.fileName}
-        onApprove={handleApproveTransactions}
-        onCancel={handleCancelReview}
-      />
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Review Uploaded Files</CardTitle>
+            <CardDescription>
+              {pendingReview.files.length} files processed for {pendingReview.accountName}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+              {pendingReview.files.map((file, idx) => (
+                <div key={idx} className="p-2 border rounded text-xs">
+                  <div className="font-medium truncate" title={file.fileName}>
+                    {file.fileName}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {file.month} {file.year}
+                  </div>
+                  <div className="text-muted-foreground">{file.transactions.length} txns</div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <TransactionReview
+          transactions={pendingReview.transactions}
+          accountName={pendingReview.accountName}
+          month={`${pendingReview.files.length} months`}
+          year=""
+          fileName={`${pendingReview.files.length} files`}
+          onApprove={handleApproveTransactions}
+          onCancel={handleCancelReview}
+        />
+      </div>
     )
   }
 
@@ -282,10 +322,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       {/* Upload Form */}
       <Card>
         <CardHeader>
-          <CardTitle>Upload Bank Statements</CardTitle>
+          <CardTitle>Upload All Statements for One Account</CardTitle>
           <CardDescription>
-            Upload your monthly statements (PDF or CSV format). You can upload multiple files at once. The app will work
-            with whatever you've uploaded so far.
+            Enter account details once, then select all 12 monthly statements at once. The system will automatically
+            detect dates from the files.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -301,7 +341,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                       aria-expanded={isComboboxOpen}
                       className="w-full justify-between font-normal bg-transparent"
                     >
-                      {accountName || "e.g., Chase Checking, AmEx Business"}
+                      {accountName || "e.g., Wells Fargo Business Checking"}
                       <span className="ml-2 h-4 w-4 shrink-0 opacity-50">▼</span>
                     </Button>
                   </PopoverTrigger>
@@ -361,40 +401,12 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                   </SelectContent>
                 </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="month">Month</Label>
-                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger id="month">
-                    <SelectValue placeholder="Select month" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MONTHS.map((month) => (
-                      <SelectItem key={month} value={month}>
-                        {month}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="year">Year</Label>
-                <Select value={selectedYear} onValueChange={setSelectedYear}>
-                  <SelectTrigger id="year">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="2025">2025</SelectItem>
-                    <SelectItem value="2024">2024</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="file">Statement File(s)</Label>
-              <div className="flex items-center gap-2">
+              <Label htmlFor="file">Select All Monthly Statements</Label>
+              <div className="border-2 border-dashed rounded-lg p-8 text-center hover:border-primary transition-colors">
+                <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                 <Input
                   id="file"
                   type="file"
@@ -404,11 +416,29 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                   disabled={isUploading}
                   className="cursor-pointer"
                 />
-                {isUploading && <Badge variant="outline">Processing...</Badge>}
+                {isUploading ? (
+                  <div className="mt-4">
+                    <Badge variant="outline" className="animate-pulse">
+                      Processing files...
+                    </Badge>
+                  </div>
+                ) : (
+                  <div className="mt-4 text-sm text-muted-foreground">
+                    <p className="font-medium">Click to select files or drag and drop</p>
+                    <p className="text-xs mt-2">Select all 12 months at once. Supports PDF and CSV formats.</p>
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Supported formats: PDF, CSV. You can select multiple files at once.
-              </p>
+            </div>
+
+            <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+              <p className="text-sm font-medium">Pro tip:</p>
+              <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Download all 12 monthly statements from your bank first</li>
+                <li>Select all files at once (Cmd/Ctrl + A) for this account</li>
+                <li>The system will automatically extract dates from each statement</li>
+                <li>Repeat this process for each additional account</li>
+              </ul>
             </div>
           </div>
         </CardContent>
