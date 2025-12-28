@@ -56,6 +56,8 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState<any[]>([])
+  const [processingIndex, setProcessingIndex] = useState(0)
   const [pendingReview, setPendingReview] = useState<{
     transactions: any[]
     accountName: string
@@ -97,8 +99,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file || !accountName || !selectedMonth) {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+
+    if (!accountName || !selectedMonth) {
       toast({
         title: "Missing Information",
         description: "Please fill in account name, month, and year before uploading",
@@ -107,49 +111,92 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       return
     }
 
+    console.log(`[v0] Starting bulk upload of ${files.length} files`)
     setIsUploading(true)
 
     try {
       saveAccountName(accountName)
 
-      const formData = new FormData()
-      formData.append("file", file)
-      formData.append("accountName", accountName)
-      formData.append("accountType", accountType)
-      formData.append("month", selectedMonth)
-      formData.append("year", selectedYear)
+      // Process all files
+      const results = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        console.log(`[v0] Processing file ${i + 1}/${files.length}: ${file.name}`)
 
-      const response = await fetch("/api/statements/upload", {
-        method: "POST",
-        body: formData,
-      })
+        const formData = new FormData()
+        formData.append("file", file)
+        formData.append("accountName", accountName)
+        formData.append("accountType", accountType)
+        formData.append("month", selectedMonth)
+        formData.append("year", selectedYear)
 
-      if (response.ok) {
-        const data = await response.json()
+        try {
+          const response = await fetch("/api/statements/upload", {
+            method: "POST",
+            body: formData,
+          })
 
+          if (response.ok) {
+            const data = await response.json()
+            results.push({
+              success: true,
+              fileName: file.name,
+              transactions: data.transactions || [],
+            })
+          } else {
+            const errorData = await response.json()
+            results.push({
+              success: false,
+              fileName: file.name,
+              error: errorData.error,
+            })
+          }
+        } catch (error) {
+          console.error(`[v0] Error processing ${file.name}:`, error)
+          results.push({
+            success: false,
+            fileName: file.name,
+            error: "Upload failed",
+          })
+        }
+      }
+
+      // Combine all successful transactions for review
+      const allTransactions = results.filter((r) => r.success).flatMap((r) => r.transactions)
+
+      const failedCount = results.filter((r) => !r.success).length
+
+      if (allTransactions.length > 0) {
         setPendingReview({
-          transactions: data.transactions || [],
+          transactions: allTransactions,
           accountName,
           accountType,
           month: selectedMonth,
           year: selectedYear,
-          fileName: file.name,
+          fileName: `${files.length} files`,
         })
 
-        event.target.value = ""
+        if (failedCount > 0) {
+          toast({
+            title: "Partial Upload Success",
+            description: `${results.filter((r) => r.success).length} files processed, ${failedCount} failed`,
+            variant: "default",
+          })
+        }
       } else {
-        const errorData = await response.json()
         toast({
           title: "Upload Failed",
-          description: errorData.error || "Failed to process statement",
+          description: "No files could be processed successfully",
           variant: "destructive",
         })
       }
+
+      event.target.value = ""
     } catch (error) {
-      console.error("[v0] Upload error:", error)
+      console.error("[v0] Bulk upload error:", error)
       toast({
         title: "Upload Error",
-        description: "An error occurred while uploading the statement",
+        description: "An error occurred while uploading statements",
         variant: "destructive",
       })
     } finally {
@@ -237,8 +284,8 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         <CardHeader>
           <CardTitle>Upload Bank Statements</CardTitle>
           <CardDescription>
-            Upload your monthly statements (PDF or CSV format). You can upload statements incrementally - the app will
-            work with whatever you've uploaded so far.
+            Upload your monthly statements (PDF or CSV format). You can upload multiple files at once. The app will work
+            with whatever you've uploaded so far.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -346,19 +393,22 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="file">Statement File</Label>
+              <Label htmlFor="file">Statement File(s)</Label>
               <div className="flex items-center gap-2">
                 <Input
                   id="file"
                   type="file"
                   accept=".pdf,.csv"
+                  multiple
                   onChange={handleFileUpload}
                   disabled={isUploading}
                   className="cursor-pointer"
                 />
                 {isUploading && <Badge variant="outline">Processing...</Badge>}
               </div>
-              <p className="text-xs text-muted-foreground">Supported formats: PDF, CSV</p>
+              <p className="text-xs text-muted-foreground">
+                Supported formats: PDF, CSV. You can select multiple files at once.
+              </p>
             </div>
           </div>
         </CardContent>

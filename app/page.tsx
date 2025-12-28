@@ -259,13 +259,13 @@ export default function CaliforniaBusinessAccounting() {
                   {getBusinessTypeIcon()}
                   <h1 className="text-4xl font-bold">{currentBusiness.profile.businessName}</h1>
                 </div>
-                <p className="text-lg text-muted-foreground flex items-center gap-2">
+                <div className="text-lg text-muted-foreground flex items-center gap-2">
                   {getBusinessTypeTitle()} • California Tax Optimization
                   <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
                     <Shield className="h-3 w-3 mr-1" />
                     Tax Minimization Active
                   </Badge>
-                </p>
+                </div>
                 {currentBusiness.lastSync && (
                   <p className="text-sm text-muted-foreground mt-1">Last synced: {currentBusiness.lastSync}</p>
                 )}
