@@ -64,6 +64,8 @@ export function TransactionReview({
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const { toast } = useToast()
 
+  console.log("[v0] TransactionReview rendered with", transactions.length, "transactions")
+
   const updateTransaction = (index: number, field: keyof ParsedTransaction, value: any) => {
     const updated = [...transactions]
     updated[index] = { ...updated[index], [field]: value }
@@ -112,14 +114,21 @@ export function TransactionReview({
             <Button variant="outline" onClick={onCancel}>
               Cancel
             </Button>
-            <Button onClick={() => onApprove(transactions)} className="gap-2">
+            <Button onClick={() => onApprove(transactions)} size="lg" className="gap-2">
               <CheckCircle className="h-4 w-4" />
-              Approve & Import
+              Import {transactions.length} Transactions
             </Button>
           </div>
         </div>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 p-4 bg-muted/50 rounded-lg">
+          <p className="text-sm text-muted-foreground">
+            Review the transactions below. Click the edit icon to modify any incorrect data, or click "Import" when
+            ready to proceed.
+          </p>
+        </div>
+
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
