@@ -1,30 +1,34 @@
-# DIY accounting solution
+# DIY Books — Tax-Optimized Bookkeeping
 
-*Automatically synced with your [v0.dev](https://v0.dev) deployments*
+Free Bench.io alternative for California self-employed businesses. AI-powered transaction categorization mapped to Schedule C.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/carpefukendiems-projects/v0-diy-accounting-solution)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.dev-black?style=for-the-badge)](https://v0.dev/chat/projects/yPMbqND72PS)
+## New in v2.0 (Engine Files)
 
-## Overview
+Added backend engines that integrate with the existing v0 UI:
 
-This repository will stay in sync with your deployed chats on [v0.dev](https://v0.dev).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.dev](https://v0.dev).
+- `lib/parsers/wellsfargo-pdf.ts` — Parses Wells Fargo PDF statements
+- `lib/parsers/csv-parser.ts` — Generic CSV parser
+- `lib/categorization/rules-engine.ts` — 80+ pre-built rules for your vendors
+- `lib/categorization/ai-engine.ts` — Claude AI fallback for unknowns
+- `lib/tax/calculator.ts` — Schedule C + SE tax calculator
+- `lib/supabase/` — Database client setup
+- `app/api/upload/route.ts` — PDF/CSV processing API endpoint
+- `types/index.ts` — TypeScript type definitions
+- `scripts/supabase-complete-setup.sql` — One-file database setup
 
-## Deployment
+## Supabase Setup
 
-Your project is live at:
+1. Create project at supabase.com
+2. SQL Editor → paste `scripts/supabase-complete-setup.sql` → Run
+3. Copy URL + keys to `.env.local`
 
-**[https://vercel.com/carpefukendiems-projects/v0-diy-accounting-solution](https://vercel.com/carpefukendiems-projects/v0-diy-accounting-solution)**
+## Deploy
 
-## Build your app
+```bash
+cp .env.local.example .env.local  # Fill in your keys
+pnpm install
+pnpm dev
+```
 
-Continue building your app on:
-
-**[https://v0.dev/chat/projects/yPMbqND72PS](https://v0.dev/chat/projects/yPMbqND72PS)**
-
-## How It Works
-
-1. Create and modify your project using [v0.dev](https://v0.dev)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+## Disclaimer
+For bookkeeping purposes only. Consult a CPA before filing.
