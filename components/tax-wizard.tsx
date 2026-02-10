@@ -29,33 +29,80 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
     deductions: [],
   })
 
+  // ========================================
+  // RANKING SB — Digital Marketing Agency
+  // ========================================
   const ghlDeductions = [
-    { id: "software", label: "GoHighLevel & Software Subscriptions", description: "100% deductible" },
-    { id: "home-office", label: "Home Office Expenses", description: "Portion of rent/mortgage" },
-    { id: "internet", label: "Internet & Phone", description: "Business use percentage" },
-    { id: "advertising", label: "Advertising & Marketing", description: "Client ads, your marketing" },
-    { id: "contractors", label: "Contractor Payments", description: "Track for 1099s" },
-    { id: "meals", label: "Client Meals & Entertainment", description: "50% deductible" },
-    { id: "education", label: "Courses & Professional Development", description: "100% deductible" },
-    { id: "travel", label: "Business Travel", description: "Conferences, client visits" },
-    { id: "california-taxes", label: "California LLC Fees & Taxes", description: "State-specific" },
+    // Line 8 — Advertising
+    { id: "advertising", label: "Advertising & Marketing", description: "Line 8 · X Corp ads, Webflow, Google Ads, Facebook Ads — 100% deductible", scheduleCLine: "8" },
+    // Line 9 — Car & Truck
+    { id: "vehicle", label: "Vehicle & Mileage", description: "Line 9 · $0.70/mile for 2025, gas, parking, tolls — track with MileIQ/Everlance", scheduleCLine: "9" },
+    // Line 10 — Commissions & Fees
+    { id: "merchant-fees", label: "Merchant & Platform Fees", description: "Line 10 · Stripe fees, PayPal fees, Upwork service fees", scheduleCLine: "10" },
+    // Line 11 — Contract Labor
+    { id: "contractors", label: "Contract Labor (1099s)", description: "Line 11 · Freelancers, subcontractors — must issue 1099-NEC if $600+", scheduleCLine: "11" },
+    // Line 13 — Depreciation
+    { id: "equipment", label: "Equipment & Depreciation", description: "Line 13 · Computers, monitors, cameras — Section 179 up to $1.22M", scheduleCLine: "13" },
+    // Line 15 — Insurance
+    { id: "insurance", label: "Business Insurance", description: "Line 15 · United Financial Casualty, E&O, general liability — NOT health insurance", scheduleCLine: "15" },
+    // Line 16b — Interest
+    { id: "bank-fees", label: "Interest & Bank Fees", description: "Line 16b · Overdraft fees, monthly service fees, business loan interest", scheduleCLine: "16b" },
+    // Line 17 — Legal & Professional
+    { id: "professional", label: "Professional Services", description: "Line 17 · Bench Accounting, CoinLedger, CPA fees, legal fees", scheduleCLine: "17" },
+    // Line 18 — Office
+    { id: "office", label: "Office Supplies & Expenses", description: "Line 18 · UPS Store, shipping, paper, ink, desk supplies", scheduleCLine: "18" },
+    // Line 24a — Travel
+    { id: "travel", label: "Business Travel", description: "Line 24a · Flights, hotels, Uber/Lyft — conferences, client visits", scheduleCLine: "24a" },
+    // Line 24b — Meals
+    { id: "meals", label: "Business Meals", description: "Line 24b · Client meals, networking — 50% deductible only", scheduleCLine: "24b" },
+    // Line 25 — Utilities
+    { id: "utilities", label: "Utilities", description: "Line 25 · SoCal Edison, water — business-use percentage", scheduleCLine: "25" },
+    { id: "phone-internet", label: "Phone & Internet", description: "Line 25 · Verizon Wireless, home internet — 60-80% business use typical for agencies", scheduleCLine: "25" },
+    // Line 27a — Other
+    { id: "software", label: "Software & SaaS Subscriptions", description: "Line 27a · GoHighLevel ($497+$25/mo), Mailgun, OpenAI, Cursor, Loom, Screaming Frog", scheduleCLine: "27a" },
+    { id: "education", label: "Education & Training", description: "Line 27a · Codecademy, courses, certifications, books — must be business-related", scheduleCLine: "27a" },
+    { id: "waste", label: "Waste & Disposal", description: "Line 27a · Marborg — business-use percentage", scheduleCLine: "27a" },
+    // Line 30 — Home Office
+    { id: "home-office", label: "Home Office Deduction", description: "Line 30 · Simplified: $5/sq ft up to 300 sq ft ($1,500 max). Must be dedicated space.", scheduleCLine: "30" },
+    // Schedule 1 (not Schedule C, but critical)
+    { id: "health-insurance", label: "Self-Employed Health Insurance ★", description: "Schedule 1 · 100% of premiums deductible — reduces AGI, not on Schedule C", scheduleCLine: "Sch 1" },
+    { id: "sep-ira", label: "SEP-IRA / Solo 401(k) ★", description: "Schedule 1 · Up to 25% of net SE income (max $69,000). Open before filing deadline.", scheduleCLine: "Sch 1" },
+    { id: "california-fees", label: "California LLC / Franchise Tax", description: "Line 23 · $800 minimum franchise tax + LLC fee if gross > $250k", scheduleCLine: "23" },
   ]
 
+  // ========================================
+  // JANICE — Hair Stylist Business
+  // ========================================
   const hairStylistDeductions = [
-    { id: "booth-rent", label: "Booth/Chair Rental", description: "100% deductible" },
-    { id: "hair-products", label: "Hair Products & Supplies", description: "Shampoo, color, treatments" },
-    { id: "styling-tools", label: "Styling Tools & Equipment", description: "Scissors, dryers, flat irons" },
-    { id: "furniture", label: "Salon Furniture & Decor", description: "Chairs, mirrors, decorations" },
-    { id: "continuing-education", label: "Cosmetology Education", description: "Classes, certifications, workshops" },
-    { id: "license-fees", label: "Cosmetology License Fees", description: "California Board of Barbering renewals" },
-    { id: "insurance", label: "Professional Liability Insurance", description: "Salon/stylist insurance" },
-    { id: "laundry", label: "Laundry & Cleaning", description: "Towels, capes, smocks" },
-    { id: "marketing", label: "Marketing & Advertising", description: "Social media ads, business cards" },
-    { id: "software-booking", label: "Booking & Scheduling Software", description: "Square, Vagaro, Schedulicity" },
-    { id: "clothing", label: "Professional Clothing", description: "Work attire, aprons" },
-    { id: "vehicle", label: "Vehicle Expenses", description: "Mileage to/from salon, supply runs" },
-    { id: "phone-internet", label: "Phone & Internet", description: "Business use percentage" },
-    { id: "ca-taxes", label: "California Taxes & Fees", description: "LLC fees, sales tax permits" },
+    // Line 20b — Rent
+    { id: "booth-rent", label: "Booth / Chair Rental", description: "Line 20b · Monthly booth rental fee at salon — 100% deductible, usually largest expense", scheduleCLine: "20b" },
+    // Line 22 — Supplies
+    { id: "hair-products", label: "Hair Products & Color", description: "Line 22 · Shampoo, conditioner, color, treatments, developer — keep ALL receipts", scheduleCLine: "22" },
+    { id: "styling-tools", label: "Styling Tools & Equipment", description: "Line 22 · Scissors, flat irons, dryers, curling irons, brushes, combs, clips", scheduleCLine: "22" },
+    { id: "disposables", label: "Disposable Supplies", description: "Line 22 · Gloves, foils, capes, neck strips, towels, sanitizer", scheduleCLine: "22" },
+    // Line 8 — Advertising
+    { id: "marketing", label: "Marketing & Advertising", description: "Line 8 · Instagram/Facebook ads, business cards, Yelp, website", scheduleCLine: "8" },
+    // Line 9 — Car & Truck
+    { id: "vehicle", label: "Vehicle & Mileage", description: "Line 9 · $0.70/mile — commute to salon, supply runs, house calls", scheduleCLine: "9" },
+    // Line 15 — Insurance
+    { id: "insurance", label: "Professional Liability Insurance", description: "Line 15 · Stylist/salon insurance, general liability", scheduleCLine: "15" },
+    // Line 23 — Taxes & Licenses
+    { id: "license-fees", label: "Cosmetology License & Permits", description: "Line 23 · CA Board of Barbering & Cosmetology renewal, city business license", scheduleCLine: "23" },
+    // Line 25 — Utilities
+    { id: "phone-internet", label: "Phone & Internet", description: "Line 25 · Cell phone (business %), booking confirmations, client texts", scheduleCLine: "25" },
+    // Line 27a — Other
+    { id: "software-booking", label: "Booking & Payment Software", description: "Line 27a · Square, Vagaro, Schedulicity, GlossGenius — 100% deductible", scheduleCLine: "27a" },
+    { id: "education", label: "Continuing Education", description: "Line 27a · Advanced color classes, cutting workshops, cosmetology CE hours", scheduleCLine: "27a" },
+    { id: "laundry", label: "Laundry & Cleaning", description: "Line 27a · Towel service, cape cleaning, smock laundering", scheduleCLine: "27a" },
+    { id: "clothing", label: "Professional Clothing / Uniforms", description: "Line 27a · Only if required by salon or branded — NOT everyday clothes", scheduleCLine: "27a" },
+    // Line 24b — Meals
+    { id: "meals", label: "Business Meals", description: "Line 24b · Client consultations over coffee/lunch — 50% deductible, must document purpose", scheduleCLine: "24b" },
+    // Line 30 — Home Office
+    { id: "home-office", label: "Home Office / Home Studio", description: "Line 30 · If you do ANY work from home (booking, inventory, social media). Simplified: $5/sq ft.", scheduleCLine: "30" },
+    // Schedule 1
+    { id: "health-insurance", label: "Self-Employed Health Insurance ★", description: "Schedule 1 · 100% of health/dental/vision premiums deductible — huge tax saver", scheduleCLine: "Sch 1" },
+    { id: "sep-ira", label: "SEP-IRA / Solo 401(k) ★", description: "Schedule 1 · Save for retirement AND reduce taxes — contribute up to 25% of net income", scheduleCLine: "Sch 1" },
+    { id: "california-fees", label: "California Taxes & Fees", description: "Line 23 · State license fees, sales tax on retail products, LLC/business registration", scheduleCLine: "23" },
   ]
 
   const deductionCategories = profile.businessType === "hair-stylist" ? hairStylistDeductions : ghlDeductions
@@ -72,6 +119,17 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1)
     }
+  }
+
+  const selectAll = () => {
+    setProfile((prev) => ({
+      ...prev,
+      deductions: deductionCategories.map((c) => c.id),
+    }))
+  }
+
+  const deselectAll = () => {
+    setProfile((prev) => ({ ...prev, deductions: [] }))
   }
 
   const toggleDeduction = (id: string) => {
@@ -146,28 +204,18 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
                   value={profile.businessType}
                   onValueChange={(value) => setProfile({ ...profile, businessType: value, deductions: [] })}
                 >
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg">
                     <RadioGroupItem value="gohighlevel-agency" id="ghl" />
-                    <Label htmlFor="ghl" className="font-normal">
-                      GoHighLevel Digital Marketing Agency
+                    <Label htmlFor="ghl" className="font-normal cursor-pointer flex-1">
+                      <span className="font-medium">GoHighLevel Digital Marketing Agency</span>
+                      <p className="text-xs text-muted-foreground">SaaS subscriptions, Stripe/Upwork income, contractor management</p>
                     </Label>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-2 p-3 border rounded-lg">
                     <RadioGroupItem value="hair-stylist" id="hair-stylist" />
-                    <Label htmlFor="hair-stylist" className="font-normal">
-                      Hair Stylist / Salon Professional
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="freelancer" id="freelancer" />
-                    <Label htmlFor="freelancer" className="font-normal">
-                      Freelance Digital Marketer
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="consultant" id="consultant" />
-                    <Label htmlFor="consultant" className="font-normal">
-                      Marketing Consultant
+                    <Label htmlFor="hair-stylist" className="font-normal cursor-pointer flex-1">
+                      <span className="font-medium">Hair Stylist / Salon Professional</span>
+                      <p className="text-xs text-muted-foreground">Booth rental, supplies, cosmetology license, client services</p>
                     </Label>
                   </div>
                 </RadioGroup>
@@ -214,21 +262,38 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
 
           {currentStep === 3 && (
             <div className="space-y-4">
-              <Label>Select deduction categories to track</Label>
-              <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>
+                  Select deduction categories to track
+                  {profile.businessType === "hair-stylist" ? " — Hair Stylist" : " — Digital Marketing Agency"}
+                </Label>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={selectAll}>Select All</Button>
+                  <Button variant="outline" size="sm" onClick={deselectAll}>Clear</Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ★ = deducted on Schedule 1 (reduces AGI), not Schedule C. Still tracked here for completeness.
+                You can always edit categories later after reviewing your transactions.
+              </p>
+              <div className="space-y-2">
                 {deductionCategories.map((category) => (
-                  <div key={category.id} className="flex items-start space-x-3 p-3 border rounded-lg">
+                  <div key={category.id} className="flex items-start space-x-3 p-3 border rounded-lg hover:bg-accent/50 transition-colors">
                     <Checkbox
                       id={category.id}
                       checked={profile.deductions.includes(category.id)}
                       onCheckedChange={() => toggleDeduction(category.id)}
+                      className="mt-0.5"
                     />
                     <div className="flex-1">
                       <Label htmlFor={category.id} className="font-medium cursor-pointer">
                         {category.label}
                       </Label>
-                      <p className="text-sm text-muted-foreground">{category.description}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{category.description}</p>
                     </div>
+                    <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
+                      {category.scheduleCLine}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -247,8 +312,6 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
                   <p className="font-medium">
                     {profile.businessType === "gohighlevel-agency" && "GoHighLevel Digital Marketing Agency"}
                     {profile.businessType === "hair-stylist" && "Hair Stylist / Salon Professional"}
-                    {profile.businessType === "freelancer" && "Freelance Digital Marketer"}
-                    {profile.businessType === "consultant" && "Marketing Consultant"}
                   </p>
                 </div>
                 <div>
@@ -261,21 +324,27 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
                 </div>
                 <div>
                   <Label className="text-muted-foreground">
-                    Tracking {profile.deductions.length} Deduction Categories
+                    Tracking {profile.deductions.length} of {deductionCategories.length} Deduction Categories
                   </Label>
-                  <ul className="list-disc list-inside text-sm space-y-1 mt-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1 mt-2">
                     {profile.deductions.map((id) => {
                       const category = deductionCategories.find((c) => c.id === id)
-                      return category ? <li key={id}>{category.label}</li> : null
+                      return category ? (
+                        <div key={id} className="flex items-center gap-2 text-sm">
+                          <span className="text-green-500">✓</span>
+                          <span>{category.label}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">{category.scheduleCLine}</span>
+                        </div>
+                      ) : null
                     })}
-                  </ul>
+                  </div>
                 </div>
               </div>
               <div className="bg-primary/10 border border-primary/20 p-4 rounded-lg">
                 <p className="text-sm">
-                  <strong>Ready to minimize your taxes!</strong> Your accounting system is configured to track all
-                  relevant deductions for your California business. Connect your accounts to start importing
-                  transactions.
+                  <strong>Ready to minimize your taxes!</strong> Upload your bank statements next — transactions will be
+                  auto-categorized using 80+ rules built for your business. You can manually review and edit every
+                  transaction before generating your final tax reports.
                 </p>
               </div>
             </div>
@@ -285,7 +354,9 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
             <Button variant="outline" onClick={handleBack} disabled={currentStep === 1}>
               Back
             </Button>
-            <Button onClick={handleNext}>{currentStep === 4 ? "Complete Setup" : "Next"}</Button>
+            <Button onClick={handleNext} disabled={currentStep === 1 && !profile.businessName}>
+              {currentStep === 4 ? "Complete Setup" : "Next"}
+            </Button>
           </div>
         </CardContent>
       </Card>
