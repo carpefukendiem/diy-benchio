@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { EthereumFix } from "@/components/ethereum-fix"
 import { BusinessSelector } from "@/components/business-selector"
+import { SaveIndicator } from "@/components/save-indicator"
 import {
   DollarSign,
   TrendingUp,
@@ -27,6 +28,7 @@ const StatementUploader = lazy(() => import("@/components/statement-uploader").t
 const InteractiveTransactionsList = lazy(() => import("@/components/interactive-transactions-list").then(m => ({ default: m.InteractiveTransactionsList })))
 const InteractiveReports = lazy(() => import("@/components/interactive-reports").then(m => ({ default: m.InteractiveReports })))
 const TaxWizard = lazy(() => import("@/components/tax-wizard").then(m => ({ default: m.TaxWizard })))
+const ReceiptUploader = lazy(() => import("@/components/receipt-uploader").then(m => ({ default: m.ReceiptUploader })))
 
 function TabLoading() {
   return (
@@ -65,6 +67,7 @@ interface BusinessData {
   profile: TaxProfile
   uploadedStatements: UploadedStatement[]
   transactions: Transaction[]
+  receipts: any[]
   lastSync: string
 }
 
@@ -144,6 +147,7 @@ export default function CaliforniaBusinessAccounting() {
       },
       uploadedStatements: [],
       transactions: [],
+      receipts: [],
       lastSync: "",
     }
 
@@ -220,6 +224,20 @@ export default function CaliforniaBusinessAccounting() {
       description: "Review and categorize your transactions for maximum tax deductions",
     })
   }, [toast])
+
+  // Cloud load handler — replaces localStorage data with Supabase data
+  const handleCloudLoad = useCallback((cloudBusinesses: BusinessData[]) => {
+    if (cloudBusinesses && cloudBusinesses.length > 0) {
+      setBusinesses(cloudBusinesses)
+      setCurrentBusinessId(cloudBusinesses[0].id)
+      setShowWizard(false)
+    }
+  }, [])
+
+  // Receipts handler
+  const handleReceiptsUpdate = useCallback((receipts: any[]) => {
+    updateCurrentBusiness({ receipts })
+  }, [updateCurrentBusiness])
 
   // Memoize expensive calculations
   const stats = useMemo(() => {
@@ -340,7 +358,8 @@ export default function CaliforniaBusinessAccounting() {
                   <p className="text-sm text-muted-foreground mt-1">Last synced: {currentBusiness.lastSync}</p>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
+                <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
                   businesses={businessSelectorData}
                   currentBusinessId={currentBusinessId}
@@ -424,11 +443,12 @@ export default function CaliforniaBusinessAccounting() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="statements">Statements</TabsTrigger>
-              <TabsTrigger value="transactions">Transaction Processing</TabsTrigger>
+              <TabsTrigger value="receipts">Receipts</TabsTrigger>
+              <TabsTrigger value="transactions">Transactions</TabsTrigger>
               <TabsTrigger value="reports">Tax Reports</TabsTrigger>
-              <TabsTrigger value="deductions">Deduction Tracking</TabsTrigger>
+              <TabsTrigger value="deductions">Deductions</TabsTrigger>
             </TabsList>
 
             <TabsContent value="statements" className="space-y-6">
@@ -437,6 +457,16 @@ export default function CaliforniaBusinessAccounting() {
                   existingStatements={currentBusiness.uploadedStatements}
                   onStatementsUpdate={handleStatementsUpdate}
                   onContinue={handleContinueToTransactions}
+                />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="receipts" className="space-y-6">
+              <Suspense fallback={<TabLoading />}>
+                <ReceiptUploader
+                  businessId={currentBusinessId}
+                  receipts={currentBusiness.receipts || []}
+                  onReceiptsUpdate={handleReceiptsUpdate}
                 />
               </Suspense>
             </TabsContent>

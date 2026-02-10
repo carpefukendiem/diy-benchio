@@ -138,6 +138,17 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'grubhub', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'cajun kitchen', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'dart coffee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'sweet creams', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
+  // === CC FEES & INTEREST — Line 16b (Interest & Bank Fees) ===
+  { pattern: 'late fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'late payment fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'purchase interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'annual fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  // CC payments to credit cards (transfers, not expenses)
+  { pattern: 'payment received wells fargo', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
+  // === RETAIL — categorize common CC purchases ===
+  { pattern: 'best buy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.75 },
   { pattern: 'cvs', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'audible', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },
   { pattern: 'prime video', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },

@@ -74,6 +74,208 @@ async function extractPDFText(buffer: Buffer): Promise<string> {
 }
 
 // ========================================
+// Detect statement type from PDF text
+// ========================================
+function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" | "unknown" {
+  const t = text.toLowerCase()
+  if (t.includes("wells fargo") || t.includes("transaction history") && t.includes("purchase authorized")) return "wellsfargo"
+  if (t.includes("chase freedom") || t.includes("chase.com/cardhelp") || t.includes("cardmember service")) return "chase"
+  if (t.includes("barclays") || t.includes("barclaysus.com") || t.includes("barclays view")) return "barclays"
+  // Fallback heuristics
+  if (t.includes("account activity") && t.includes("merchant name or transaction")) return "chase"
+  if (t.includes("purchase activity for") && t.includes("points")) return "barclays"
+  return "unknown"
+}
+
+// ========================================
+// Parse Chase credit card statement text
+// ========================================
+function parseChaseText(text: string) {
+  const lines = text.split("\n")
+
+  // Extract statement date for year
+  const stmtDateMatch = text.match(/Statement Date:\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  const openCloseMatch = text.match(/Opening\/Closing Date\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  
+  let year = 2025
+  let stmtMonth = "Unknown"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  
+  if (stmtDateMatch) {
+    year = parseInt(stmtDateMatch[3])
+    if (year < 100) year += 2000
+    const mn = parseInt(stmtDateMatch[1])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
+  } else if (openCloseMatch) {
+    year = parseInt(openCloseMatch[6])
+    if (year < 100) year += 2000
+    const mn = parseInt(openCloseMatch[4])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
+  }
+
+  const txns: any[] = []
+  let inPurchases = false
+  let inFees = false
+  let inInterest = false
+
+  // Chase format: MM/DD MERCHANT NAME CITY STATE AMOUNT
+  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})\s*$/
+
+  for (const line of lines) {
+    const t = line.trim()
+    
+    // Section detection
+    if (/^PURCHASE\b/i.test(t) && !/^PURCHASE INTEREST/i.test(t)) { inPurchases = true; inFees = false; inInterest = false; continue }
+    if (/^FEES CHARGED/i.test(t)) { inPurchases = false; inFees = true; inInterest = false; continue }
+    if (/^INTEREST CHARGED/i.test(t)) { inPurchases = false; inFees = false; inInterest = true; continue }
+    if (/^TOTAL /i.test(t) || /^ACCOUNT ACTIVITY/i.test(t) || /YOUR ACCOUNT MESSAGES/i.test(t)) { continue }
+    if (/^Date of/i.test(t) || /Merchant Name/i.test(t) || /\$ Amount/i.test(t)) continue
+
+    const m = t.match(txRe)
+    if (m && (inPurchases || inFees || inInterest)) {
+      const mn = parseInt(m[1]), dy = parseInt(m[2])
+      const desc = m[3].trim()
+      const amount = parseFloat(m[4].replace(/,/g, ""))
+      
+      if (amount <= 0) continue
+      // Skip totals lines
+      if (/^TOTAL/i.test(desc)) continue
+
+      let txType = "debit"
+      // Payments/credits are negative in Chase statements
+      if (desc.toLowerCase().includes("payment") && !desc.toLowerCase().includes("late")) txType = "credit"
+
+      txns.push({
+        date: `${year}-${String(mn).padStart(2, "0")}-${String(dy).padStart(2, "0")}`,
+        description: desc,
+        amount,
+        type: txType,
+        raw_line: t,
+        source: inFees ? "fee" : inInterest ? "interest" : "purchase",
+      })
+    }
+  }
+
+  return {
+    transactions: txns.filter(tx => tx.amount > 0),
+    statementMonth: stmtMonth,
+    statementYear: String(year),
+  }
+}
+
+// ========================================
+// Parse Barclays credit card statement text
+// ========================================
+function parseBarclaysText(text: string) {
+  const lines = text.split("\n")
+
+  // Extract statement period
+  const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  let year = 2025
+  let stmtMonth = "Unknown"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+
+  if (periodMatch) {
+    year = parseInt(periodMatch[6])
+    if (year < 100) year += 2000
+    const mn = parseInt(periodMatch[4])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
+  }
+
+  const txns: any[] = []
+  let inPayments = false
+  let inPurchases = false
+  let inFees = false
+  let inInterest = false
+
+  // Barclays months
+  const barclaysMonths: Record<string, string> = {
+    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",
+    Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
+  }
+
+  // Barclays format: Mon DD Mon DD DESCRIPTION POINTS $AMOUNT
+  // e.g.: Dec 16 Dec 17 SQ *SWEET CREAMS SANTA BARBARA CA 42 $14.00
+  const purchaseRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+(\d+)\s+\$?([\d,]+\.\d{2})\s*$/
+  // Payment format: Mon DD Mon DD Payment Received WELLS FARGO B N/A -$175.00
+  const paymentRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})\s*$/
+  // Fee/interest format: Mon DD Mon DD DESCRIPTION $AMOUNT
+  const feeRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})\s*$/
+
+  for (const line of lines) {
+    const t = line.trim()
+
+    // Section detection
+    if (/^Payments$/i.test(t)) { inPayments = true; inPurchases = false; inFees = false; inInterest = false; continue }
+    if (/^Purchase Activity/i.test(t)) { inPayments = false; inPurchases = true; inFees = false; inInterest = false; continue }
+    if (/^Fees Charged$/i.test(t)) { inPayments = false; inPurchases = false; inFees = true; inInterest = false; continue }
+    if (/^Interest Charged$/i.test(t)) { inPayments = false; inPurchases = false; inFees = false; inInterest = true; continue }
+    if (/^Total /i.test(t) || /^No fees charged/i.test(t) || /^No Transaction Activity/i.test(t)) continue
+    if (/Transaction Date/i.test(t) || /Posting Date/i.test(t)) continue
+
+    // Try purchase pattern (has Points column)
+    if (inPurchases) {
+      const pm = t.match(purchaseRe)
+      if (pm) {
+        const txMon = barclaysMonths[pm[1]] || "01"
+        const txDay = pm[2]
+        const desc = pm[5].trim()
+        const amount = parseFloat(pm[7].replace(/,/g, ""))
+        if (amount > 0) {
+          txns.push({
+            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+            description: desc, amount, type: "debit", raw_line: t, source: "purchase",
+          })
+        }
+        continue
+      }
+    }
+
+    // Try payment pattern
+    if (inPayments) {
+      const paym = t.match(paymentRe)
+      if (paym) {
+        const txMon = barclaysMonths[paym[1]] || "01"
+        const txDay = paym[2]
+        const desc = paym[5].trim()
+        const amount = parseFloat(paym[6].replace(/,/g, ""))
+        if (amount > 0) {
+          txns.push({
+            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+            description: desc, amount, type: "credit", raw_line: t, source: "payment",
+          })
+        }
+        continue
+      }
+    }
+
+    // Try fee/interest pattern
+    if (inFees || inInterest) {
+      const fm = t.match(feeRe)
+      if (fm) {
+        const txMon = barclaysMonths[fm[1]] || "01"
+        const txDay = fm[2]
+        const desc = fm[5].trim()
+        const amount = parseFloat(fm[6].replace(/,/g, ""))
+        if (amount > 0 && !/^Total/i.test(desc)) {
+          txns.push({
+            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+            description: desc, amount, type: "debit", raw_line: t,
+            source: inFees ? "fee" : "interest",
+          })
+        }
+      }
+    }
+  }
+
+  return {
+    transactions: txns.filter(tx => tx.amount > 0),
+    statementMonth: stmtMonth,
+    statementYear: String(year),
+  }
+}
+
+// ========================================
 // Parse Wells Fargo statement text into transactions
 // ========================================
 function parseWFText(text: string) {
@@ -225,13 +427,39 @@ export async function POST(request: NextRequest) {
 
       if (pdfText.length < 100) {
         return NextResponse.json({
-          error: "PDF appears empty or scanned. Download a digital PDF from Wells Fargo online banking.",
+          error: "PDF appears empty or scanned. Download a digital PDF from your bank's online banking.",
           success: false,
         }, { status: 400 })
       }
 
-      parsed = parseWFText(pdfText)
-      console.log(`[upload] Parsed: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
+      // Auto-detect statement type first
+      const stmtType = detectStatementType(pdfText)
+      console.log(`[upload] Auto-detected: ${stmtType}`)
+
+      if (stmtType === "chase") {
+        parsed = parseChaseText(pdfText)
+        console.log(`[upload] Chase: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
+      } else if (stmtType === "barclays") {
+        parsed = parseBarclaysText(pdfText)
+        console.log(`[upload] Barclays: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
+      } else {
+        // Default to Wells Fargo
+        parsed = parseWFText(pdfText)
+        console.log(`[upload] WF: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
+
+        // If Wells Fargo found nothing, try Chase and Barclays as fallback
+        if (parsed.transactions.length === 0) {
+          const chaseParsed = parseChaseText(pdfText)
+          const barclaysParsed = parseBarclaysText(pdfText)
+          if (chaseParsed.transactions.length > barclaysParsed.transactions.length) {
+            parsed = chaseParsed
+            console.log(`[upload] Fallback Chase: ${parsed.transactions.length} txns`)
+          } else if (barclaysParsed.transactions.length > 0) {
+            parsed = barclaysParsed
+            console.log(`[upload] Fallback Barclays: ${parsed.transactions.length} txns`)
+          }
+        }
+      }
     }
     // === CSV ===
     else if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
@@ -246,7 +474,7 @@ export async function POST(request: NextRequest) {
 
     if (parsed.transactions.length === 0) {
       return NextResponse.json({
-        error: `No transactions found in ${file.name}. Make sure this is a Wells Fargo statement.`,
+        error: `No transactions found in ${file.name}. Supports Wells Fargo, Chase Freedom, and Barclays View statements.`,
         success: false,
       }, { status: 400 })
     }
