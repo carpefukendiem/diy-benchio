@@ -1,15 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { InteractiveTransactionsList } from "@/components/interactive-transactions-list"
-import { InteractiveReports } from "@/components/interactive-reports"
 import { EthereumFix } from "@/components/ethereum-fix"
-import { StatementUploader } from "@/components/statement-uploader"
-import { TaxWizard } from "@/components/tax-wizard"
 import { BusinessSelector } from "@/components/business-selector"
 import {
   DollarSign,
@@ -22,8 +18,23 @@ import {
   Shield,
   Building2,
   Plus,
+  Loader2,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+
+// Lazy load heavy tab components — only loads when user clicks that tab
+const StatementUploader = lazy(() => import("@/components/statement-uploader").then(m => ({ default: m.StatementUploader })))
+const InteractiveTransactionsList = lazy(() => import("@/components/interactive-transactions-list").then(m => ({ default: m.InteractiveTransactionsList })))
+const InteractiveReports = lazy(() => import("@/components/interactive-reports").then(m => ({ default: m.InteractiveReports })))
+const TaxWizard = lazy(() => import("@/components/tax-wizard").then(m => ({ default: m.TaxWizard })))
+
+function TabLoading() {
+  return (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
 
 interface Transaction {
   id: string
@@ -64,17 +75,65 @@ interface TaxProfile {
   deductions: string[]
 }
 
+// Debounced localStorage save — prevents lag from serializing on every keystroke
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function debouncedSave(key: string, value: any, delay = 500) {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value))
+    } catch (e) {
+      console.warn("localStorage save failed:", e)
+    }
+  }, delay)
+}
+
 export default function CaliforniaBusinessAccounting() {
   const [businesses, setBusinesses] = useState<BusinessData[]>([])
   const [currentBusinessId, setCurrentBusinessId] = useState<string>("")
   const [showWizard, setShowWizard] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
+  const [isHydrated, setIsHydrated] = useState(false)
   const { toast } = useToast()
 
   const [activeTab, setActiveTab] = useState("statements")
-  const currentBusiness = businesses.find((b) => b.id === currentBusinessId)
+  const currentBusiness = useMemo(
+    () => businesses.find((b) => b.id === currentBusinessId),
+    [businesses, currentBusinessId]
+  )
 
-  const handleWizardComplete = (profile: TaxProfile) => {
+  // Load from localStorage once on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("businesses")
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setBusinesses(parsed)
+        if (parsed.length > 0) {
+          const lastId = localStorage.getItem("lastBusinessId")
+          setCurrentBusinessId(lastId || parsed[0].id)
+          setShowWizard(false)
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load saved data:", e)
+    }
+    setIsHydrated(true)
+  }, [])
+
+  // Debounced save to localStorage
+  useEffect(() => {
+    if (!isHydrated || businesses.length === 0) return
+    debouncedSave("businesses", businesses)
+  }, [businesses, isHydrated])
+
+  useEffect(() => {
+    if (currentBusinessId) {
+      localStorage.setItem("lastBusinessId", currentBusinessId)
+    }
+  }, [currentBusinessId])
+
+  const handleWizardComplete = useCallback((profile: TaxProfile) => {
     const newBusiness: BusinessData = {
       id: Date.now().toString(),
       profile: {
@@ -96,77 +155,102 @@ export default function CaliforniaBusinessAccounting() {
       title: "Business Added Successfully",
       description: `${profile.businessName} is now configured for tax optimization.`,
     })
-  }
+  }, [toast])
 
-  const handleAddBusiness = () => {
+  const handleAddBusiness = useCallback(() => {
     setShowWizard(true)
-  }
+  }, [])
 
-  const handleSelectBusiness = (id: string) => {
+  const handleSelectBusiness = useCallback((id: string) => {
     setCurrentBusinessId(id)
     toast({
       title: "Switched Business",
       description: `Now viewing ${businesses.find((b) => b.id === id)?.profile.businessName}`,
     })
-  }
+  }, [businesses, toast])
 
-  const updateCurrentBusiness = (updates: Partial<BusinessData>) => {
+  const updateCurrentBusiness = useCallback((updates: Partial<BusinessData>) => {
     setBusinesses((prev) => prev.map((b) => (b.id === currentBusinessId ? { ...b, ...updates } : b)))
-  }
+  }, [currentBusinessId])
 
-  const updateTransaction = async (transactionId: string, updates: Partial<Transaction>) => {
-    if (!currentBusiness) return
-
-    const updatedTransactions = currentBusiness.transactions.map((t) =>
-      t.id === transactionId ? { ...t, ...updates } : t,
+  const updateTransaction = useCallback(async (transactionId: string, updates: Partial<Transaction>) => {
+    setBusinesses((prev) =>
+      prev.map((b) =>
+        b.id === currentBusinessId
+          ? {
+              ...b,
+              transactions: b.transactions.map((t) =>
+                t.id === transactionId ? { ...t, ...updates } : t
+              ),
+            }
+          : b
+      )
     )
-    updateCurrentBusiness({ transactions: updatedTransactions })
-  }
+  }, [currentBusinessId])
 
-  const bulkUpdateTransactions = async (updates: Array<{ id: string; updates: Partial<Transaction> }>) => {
-    if (!currentBusiness) return
+  const bulkUpdateTransactions = useCallback(async (updates: Array<{ id: string; updates: Partial<Transaction> }>) => {
+    setBusinesses((prev) =>
+      prev.map((b) => {
+        if (b.id !== currentBusinessId) return b
+        const updateMap = new Map(updates.map(u => [u.id, u.updates]))
+        return {
+          ...b,
+          transactions: b.transactions.map((t) => {
+            const u = updateMap.get(t.id)
+            return u ? { ...t, ...u } : t
+          }),
+        }
+      })
+    )
+  }, [currentBusinessId])
 
-    let updatedTransactions = [...currentBusiness.transactions]
-    updates.forEach(({ id, updates: transactionUpdates }) => {
-      updatedTransactions = updatedTransactions.map((t) => (t.id === id ? { ...t, ...transactionUpdates } : t))
-    })
-    updateCurrentBusiness({ transactions: updatedTransactions })
-  }
-
-  const handleStatementsUpdate = (statements: UploadedStatement[]) => {
+  const handleStatementsUpdate = useCallback((statements: UploadedStatement[]) => {
     const allTransactions = statements.flatMap((statement) => statement.transactions)
     updateCurrentBusiness({
       uploadedStatements: statements,
       transactions: allTransactions,
       lastSync: new Date().toLocaleString(),
     })
-  }
+  }, [updateCurrentBusiness])
 
-  const handleContinueToTransactions = () => {
+  const handleContinueToTransactions = useCallback(() => {
     setActiveTab("transactions")
     toast({
       title: "Ready to Process",
       description: "Review and categorize your transactions for maximum tax deductions",
     })
-  }
+  }, [toast])
 
-  const totalBalance = currentBusiness
-    ? currentBusiness.uploadedStatements.reduce((sum, statement) => {
-        const statementBalance = statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
-        return sum + statementBalance
-      }, 0)
-    : 0
+  // Memoize expensive calculations
+  const stats = useMemo(() => {
+    if (!currentBusiness) return { totalBalance: 0, totalRevenue: 0, totalExpenses: 0, taxSavings: 0, estimatedTaxLiability: 0 }
 
-  const totalRevenue = currentBusiness
-    ? currentBusiness.transactions.filter((t) => t.isIncome).reduce((sum, t) => sum + t.amount, 0)
-    : 0
+    const totalBalance = currentBusiness.uploadedStatements.reduce((sum, statement) => {
+      return sum + statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
+    }, 0)
 
-  const totalExpenses = currentBusiness
-    ? currentBusiness.transactions.filter((t) => !t.isIncome).reduce((sum, t) => sum + t.amount, 0)
-    : 0
+    const totalRevenue = currentBusiness.transactions
+      .filter((t) => t.isIncome)
+      .reduce((sum, t) => sum + t.amount, 0)
 
-  const taxSavings = totalExpenses * 0.35
-  const estimatedTaxLiability = Math.max(0, (totalRevenue - totalExpenses) * 0.35)
+    const totalExpenses = currentBusiness.transactions
+      .filter((t) => !t.isIncome)
+      .reduce((sum, t) => sum + t.amount, 0)
+
+    const taxSavings = totalExpenses * 0.35
+    const estimatedTaxLiability = Math.max(0, (totalRevenue - totalExpenses) * 0.35)
+
+    return { totalBalance, totalRevenue, totalExpenses, taxSavings, estimatedTaxLiability }
+  }, [currentBusiness])
+
+  const businessSelectorData = useMemo(() =>
+    businesses.map((b) => ({
+      id: b.id,
+      name: b.profile.businessName,
+      type: b.profile.businessType,
+    })),
+    [businesses]
+  )
 
   const getBusinessTypeIcon = () => {
     if (!currentBusiness) return <Building2 className="h-5 w-5" />
@@ -183,30 +267,14 @@ export default function CaliforniaBusinessAccounting() {
     return "Business"
   }
 
-  useEffect(() => {
-    const savedBusinesses = localStorage.getItem("businesses")
-    if (savedBusinesses) {
-      const parsedBusinesses = JSON.parse(savedBusinesses)
-      setBusinesses(parsedBusinesses)
-      if (parsedBusinesses.length > 0) {
-        const lastBusinessId = localStorage.getItem("lastBusinessId")
-        setCurrentBusinessId(lastBusinessId || parsedBusinesses[0].id)
-        setShowWizard(false)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (businesses.length > 0) {
-      localStorage.setItem("businesses", JSON.stringify(businesses))
-    }
-  }, [businesses])
-
-  useEffect(() => {
-    if (currentBusinessId) {
-      localStorage.setItem("lastBusinessId", currentBusinessId)
-    }
-  }, [currentBusinessId])
+  // Don't render until hydrated to prevent flash
+  if (!isHydrated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   if (showWizard) {
     return (
@@ -220,7 +288,9 @@ export default function CaliforniaBusinessAccounting() {
               </Button>
             </div>
           )}
-          <TaxWizard onComplete={handleWizardComplete} />
+          <Suspense fallback={<TabLoading />}>
+            <TaxWizard onComplete={handleWizardComplete} />
+          </Suspense>
         </div>
       </>
     )
@@ -272,11 +342,7 @@ export default function CaliforniaBusinessAccounting() {
               </div>
               <div className="flex gap-2">
                 <BusinessSelector
-                  businesses={businesses.map((b) => ({
-                    id: b.id,
-                    name: b.profile.businessName,
-                    type: b.profile.businessType,
-                  }))}
+                  businesses={businessSelectorData}
                   currentBusinessId={currentBusinessId}
                   onSelectBusiness={handleSelectBusiness}
                   onAddBusiness={handleAddBusiness}
@@ -305,7 +371,7 @@ export default function CaliforniaBusinessAccounting() {
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">${totalBalance.toLocaleString()}</div>
+                <div className="text-2xl font-bold">${stats.totalBalance.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">All accounts</p>
               </CardContent>
             </Card>
@@ -316,7 +382,7 @@ export default function CaliforniaBusinessAccounting() {
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">${totalRevenue.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-green-600">${stats.totalRevenue.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">Gross income</p>
               </CardContent>
             </Card>
@@ -327,7 +393,7 @@ export default function CaliforniaBusinessAccounting() {
                 <TrendingDown className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">${totalExpenses.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-blue-600">${stats.totalExpenses.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
                   {currentBusiness.transactions.filter((t) => !t.isIncome).length} transactions
                 </p>
@@ -340,7 +406,7 @@ export default function CaliforniaBusinessAccounting() {
                 <Shield className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">${taxSavings.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-green-600">${stats.taxSavings.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">From deductions</p>
               </CardContent>
             </Card>
@@ -351,7 +417,7 @@ export default function CaliforniaBusinessAccounting() {
                 <Calculator className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-orange-600">${estimatedTaxLiability.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-orange-600">${stats.estimatedTaxLiability.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">After deductions</p>
               </CardContent>
             </Card>
@@ -366,11 +432,13 @@ export default function CaliforniaBusinessAccounting() {
             </TabsList>
 
             <TabsContent value="statements" className="space-y-6">
-              <StatementUploader
-                existingStatements={currentBusiness.uploadedStatements}
-                onStatementsUpdate={handleStatementsUpdate}
-                onContinue={handleContinueToTransactions}
-              />
+              <Suspense fallback={<TabLoading />}>
+                <StatementUploader
+                  existingStatements={currentBusiness.uploadedStatements}
+                  onStatementsUpdate={handleStatementsUpdate}
+                  onContinue={handleContinueToTransactions}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="transactions" className="space-y-6">
@@ -386,13 +454,15 @@ export default function CaliforniaBusinessAccounting() {
                   </CardContent>
                 </Card>
               ) : (
-                <InteractiveTransactionsList
-                  transactions={currentBusiness.transactions}
-                  onUpdateTransaction={updateTransaction}
-                  onBulkUpdate={bulkUpdateTransactions}
-                  onRefresh={() => {}}
-                  isLoading={isLoading}
-                />
+                <Suspense fallback={<TabLoading />}>
+                  <InteractiveTransactionsList
+                    transactions={currentBusiness.transactions}
+                    onUpdateTransaction={updateTransaction}
+                    onBulkUpdate={bulkUpdateTransactions}
+                    onRefresh={() => {}}
+                    isLoading={isLoading}
+                  />
+                </Suspense>
               )}
             </TabsContent>
 
@@ -409,110 +479,119 @@ export default function CaliforniaBusinessAccounting() {
                   </CardContent>
                 </Card>
               ) : (
-                <InteractiveReports
-                  transactions={currentBusiness.transactions}
-                  onUpdateTransaction={updateTransaction}
-                  dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
-                />
+                <Suspense fallback={<TabLoading />}>
+                  <InteractiveReports
+                    transactions={currentBusiness.transactions}
+                    onUpdateTransaction={updateTransaction}
+                    dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
+                  />
+                </Suspense>
               )}
             </TabsContent>
 
             <TabsContent value="deductions" className="space-y-6">
-              <div className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Deduction Tracking & Optimization</CardTitle>
-                    <CardDescription>
-                      Monitor your {currentBusiness.profile.deductions?.length || 0} configured deduction categories to
-                      maximize tax savings and minimize your California tax liability.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {currentBusiness.profile.deductions.map((deduction) => {
-                          const relatedTransactions = currentBusiness.transactions.filter(
-                            (t) =>
-                              !t.isIncome &&
-                              (t.category.toLowerCase().includes(deduction.toLowerCase()) ||
-                                t.description.toLowerCase().includes(deduction.toLowerCase()) ||
-                                deduction.toLowerCase().includes(t.category.toLowerCase())),
-                          )
-                          const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
-                          const savings = Math.round(totalAmount * 0.35)
-
-                          return (
-                            <Card key={deduction} className="hover:shadow-md transition-shadow">
-                              <CardContent className="p-4">
-                                <h4 className="font-semibold text-sm mb-2 line-clamp-2">{deduction}</h4>
-                                <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
-                                <div className="text-sm text-green-600 font-medium mb-2">
-                                  Tax Savings: ${savings.toFixed(2)}
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {relatedTransactions.length} transactions • 2025 YTD
-                                </p>
-                              </CardContent>
-                            </Card>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8">
-                        <p className="text-muted-foreground">
-                          No deduction categories configured. Add deduction tracking when setting up your business.
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>California Tax Optimization Summary</CardTitle>
-                    <CardDescription>Your current tax minimization performance</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                          <span className="font-medium">Total Deductible Expenses:</span>
-                          <span className="font-bold text-blue-600">${totalExpenses.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-                          <span className="font-medium">Estimated Tax Savings:</span>
-                          <span className="font-bold text-green-600">${taxSavings.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        <h4 className="font-semibold">Optimization Tips:</h4>
-                        <ul className="text-sm space-y-2">
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Review uncategorized transactions for additional deductions</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Consider equipment purchases before year-end for Section 179 deductions</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Maximize retirement contributions to reduce current year taxes</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Document home office expenses if working from home</span>
-                          </li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
+              <DeductionsTab currentBusiness={currentBusiness} stats={stats} />
             </TabsContent>
           </Tabs>
         </div>
       </div>
     </>
+  )
+}
+
+// Extracted as separate component to avoid re-renders from parent
+function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessData; stats: any }) {
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Deduction Tracking & Optimization</CardTitle>
+          <CardDescription>
+            Monitor your {currentBusiness.profile.deductions?.length || 0} configured deduction categories to
+            maximize tax savings and minimize your California tax liability.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {currentBusiness.profile.deductions.map((deduction) => {
+                const relatedTransactions = currentBusiness.transactions.filter(
+                  (t) =>
+                    !t.isIncome &&
+                    (t.category.toLowerCase().includes(deduction.toLowerCase()) ||
+                      t.description.toLowerCase().includes(deduction.toLowerCase()) ||
+                      deduction.toLowerCase().includes(t.category.toLowerCase())),
+                )
+                const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
+                const savings = Math.round(totalAmount * 0.35)
+
+                return (
+                  <Card key={deduction} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-4">
+                      <h4 className="font-semibold text-sm mb-2 line-clamp-2">{deduction}</h4>
+                      <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
+                      <div className="text-sm text-green-600 font-medium mb-2">
+                        Tax Savings: ${savings.toFixed(2)}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {relatedTransactions.length} transactions • 2025 YTD
+                      </p>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">
+                No deduction categories configured. Add deduction tracking when setting up your business.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>California Tax Optimization Summary</CardTitle>
+          <CardDescription>Your current tax minimization performance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
+                <span className="font-medium">Total Deductible Expenses:</span>
+                <span className="font-bold text-blue-600">${stats.totalExpenses.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                <span className="font-medium">Estimated Tax Savings:</span>
+                <span className="font-bold text-green-600">${stats.taxSavings.toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h4 className="font-semibold">Optimization Tips:</h4>
+              <ul className="text-sm space-y-2">
+                <li className="flex items-start gap-2">
+                  <span className="text-green-500 mt-0.5">•</span>
+                  <span>Review uncategorized transactions for additional deductions</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-green-500 mt-0.5">•</span>
+                  <span>Consider equipment purchases before year-end for Section 179 deductions</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-green-500 mt-0.5">•</span>
+                  <span>Maximize retirement contributions to reduce current year taxes</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-green-500 mt-0.5">•</span>
+                  <span>Document home office expenses if working from home</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
