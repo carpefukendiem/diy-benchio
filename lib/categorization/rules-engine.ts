@@ -80,19 +80,31 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'monthly service fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
 
   // === TRANSFERS ===
+  // === TRANSFERS — specific patterns first ===
   { pattern: 'online transfer to ruiz r everyday checking', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.95 },
   { pattern: 'online transfer from ruiz r', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.95 },
   { pattern: 'online transfer to nail-ruiz', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'online transfer from nail-ruiz', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'online transfer to carpefukendiem', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'recurring transfer to carpefukendiem', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
+  // === TRANSFERS — broad catch-all patterns (Owner Draw is default for any transfer between own accounts) ===
+  { pattern: 'online transfer to', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.85 },
+  { pattern: 'online transfer from', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.85 },
+  { pattern: 'recurring transfer to', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.85 },
+  { pattern: 'recurring transfer from', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.85 },
+  { pattern: 'wire transfer', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.80 },
+  { pattern: 'ach transfer', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.80 },
   { pattern: 'chase credit crd', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
+  { pattern: 'barclaycard', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
   { pattern: 'overdraft protection from', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.95 },
   { pattern: 'save as you go', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.95 },
 
   // === ZELLE ===
   { pattern: 'zelle to ruiz janice', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.80 },
   { pattern: 'zelle from nailruiz', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.80 },
+  // Broad Zelle catch-all
+  { pattern: 'zelle to', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.70 },
+  { pattern: 'zelle from', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.70 },
 
   // === PERSONAL ===
   { pattern: 'atm withdrawal', match: 'contains', category_id: '00000000-0000-0000-0004-000000000007', is_personal: true, is_transfer: false, confidence: 0.85 },
