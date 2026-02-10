@@ -1,34 +1,34 @@
 # DIY Books — Tax-Optimized Bookkeeping
 
-Free Bench.io alternative built for California self-employed businesses. AI-powered transaction categorization mapped directly to Schedule C line items.
+Free Bench.io alternative for California self-employed businesses. AI-powered transaction categorization mapped to Schedule C.
 
-## What's New (v2.0)
+## New in v2.0 (Engine Files)
 
-### Backend Engines
-- **Wells Fargo PDF Parser** (`lib/parsers/wellsfargo-pdf.ts`) — Parses your exact WF Business Checking statement format
-- **CSV Parser** (`lib/parsers/csv-parser.ts`) — Handles Wells Fargo, Chase, and generic CSV exports  
-- **Rule-Based Categorization** (`lib/categorization/rules-engine.ts`) — 80+ rules pre-built for your vendors
-- **Claude AI Categorization** (`lib/categorization/ai-engine.ts`) — Handles unknown transactions via Anthropic API
-- **Tax Calculator** (`lib/tax/calculator.ts`) — Schedule C, SE tax, deduction opportunities
-- **Supabase Integration** (`lib/supabase/`) — PostgreSQL with Row Level Security
+Added backend engines that integrate with the existing v0 UI:
 
-### New Pages
-- `/dashboard` — Overview with charts
-- `/upload` — Drag-and-drop statement upload
-- `/transactions` — Filterable transaction table
-- `/reports/tax` — Schedule C breakdown + deduction finder
-- `/settings` — Business config, accounts, API keys
+- `lib/parsers/wellsfargo-pdf.ts` — Parses Wells Fargo PDF statements
+- `lib/parsers/csv-parser.ts` — Generic CSV parser
+- `lib/categorization/rules-engine.ts` — 80+ pre-built rules for your vendors
+- `lib/categorization/ai-engine.ts` — Claude AI fallback for unknowns
+- `lib/tax/calculator.ts` — Schedule C + SE tax calculator
+- `lib/supabase/` — Database client setup
+- `app/api/upload/route.ts` — PDF/CSV processing API endpoint
+- `types/index.ts` — TypeScript type definitions
+- `scripts/supabase-complete-setup.sql` — One-file database setup
 
-### Database
-- `scripts/schema.sql` — Full Supabase schema
-- `scripts/seed-categories.sql` — 35+ categories mapped to Schedule C
+## Supabase Setup
 
-## Quick Start
+1. Create project at supabase.com
+2. SQL Editor → paste `scripts/supabase-complete-setup.sql` → Run
+3. Copy URL + keys to `.env.local`
 
-1. Create a Supabase project → run `scripts/schema.sql` then `scripts/seed-categories.sql`
-2. `cp .env.local.example .env.local` and fill in your keys
-3. `pnpm install && pnpm dev`
-4. Upload your Wells Fargo PDF statements at `/upload`
+## Deploy
+
+```bash
+cp .env.local.example .env.local  # Fill in your keys
+pnpm install
+pnpm dev
+```
 
 ## Disclaimer
-For bookkeeping purposes only. Consult a licensed CPA before filing.
+For bookkeeping purposes only. Consult a CPA before filing.
