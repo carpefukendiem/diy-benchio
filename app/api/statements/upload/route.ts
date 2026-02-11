@@ -36,9 +36,20 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
   "00000000-0000-0000-0004-000000000004": { name: "Personal - Shopping", isPersonal: true, isTransfer: false },
   "00000000-0000-0000-0004-000000000005": { name: "Personal - Food & Drink", isPersonal: true, isTransfer: false },
   "00000000-0000-0000-0004-000000000006": { name: "Personal - Health", isPersonal: true, isTransfer: false },
-  "00000000-0000-0000-0004-000000000007": { name: "ATM Withdrawal", isPersonal: true, isTransfer: false },
+  "00000000-0000-0000-0004-000000000007": { name: "Owner Draw", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0004-000000000008": { name: "Zelle / Venmo Transfer", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0004-000000000009": { name: "Crypto / Investments", isPersonal: true, isTransfer: false },
+  "00000000-0000-0000-0002-000000000030": { name: "Soccer Team Sponsorship", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000031": { name: "Office Kitchen Supplies", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000032": { name: "Parking Expense", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000033": { name: "Client Gifts", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000034": { name: "Travel Expense", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000035": { name: "Eye Care - Business Expense", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000036": { name: "Health Insurance", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0002-000000000037": { name: "Rent Expense", isPersonal: false, isTransfer: false },
+  "00000000-0000-0000-0003-000000000006": { name: "Owner Draw", isPersonal: false, isTransfer: true },
+  "00000000-0000-0000-0003-000000000007": { name: "Brokerage Transfer", isPersonal: false, isTransfer: true },
+  "00000000-0000-0000-0002-000000000038": { name: "Business Treasury Investment", isPersonal: false, isTransfer: false },
 }
 
 // ========================================
@@ -118,18 +129,25 @@ function parseChaseText(text: string) {
   let inFees = false
   let inInterest = false
 
-  // Chase format: MM/DD MERCHANT NAME CITY STATE AMOUNT
+  // Chase format from pdf-parse: "10/15     WINGSTOP 2592 GOLETA CA 10.86"
+  // May have variable whitespace. Amount is always at end of line.
   const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})\s*$/
 
   for (const line of lines) {
     const t = line.trim()
     
-    // Section detection
-    if (/^PURCHASE\b/i.test(t) && !/^PURCHASE INTEREST/i.test(t)) { inPurchases = true; inFees = false; inInterest = false; continue }
-    if (/^FEES CHARGED/i.test(t)) { inPurchases = false; inFees = true; inInterest = false; continue }
-    if (/^INTEREST CHARGED/i.test(t)) { inPurchases = false; inFees = false; inInterest = true; continue }
-    if (/^TOTAL /i.test(t) || /^ACCOUNT ACTIVITY/i.test(t) || /YOUR ACCOUNT MESSAGES/i.test(t)) { continue }
-    if (/^Date of/i.test(t) || /Merchant Name/i.test(t) || /\$ Amount/i.test(t)) continue
+    // Section detection — Chase uses these exact headers
+    if (t === "PURCHASES" || t === "PURCHASE") { inPurchases = true; inFees = false; inInterest = false; continue }
+    if (t === "FEES CHARGED") { inPurchases = false; inFees = true; inInterest = false; continue }
+    if (t === "INTEREST CHARGED") { inPurchases = false; inFees = false; inInterest = true; continue }
+    // Also catch variations
+    if (/^PURCHASE\s*$/i.test(t) && !/INTEREST/i.test(t)) { inPurchases = true; inFees = false; inInterest = false; continue }
+    if (/^FEES CHARGED\s*$/i.test(t)) { inPurchases = false; inFees = true; inInterest = false; continue }
+    if (/^INTEREST CHARGED\s*$/i.test(t) && !/INTEREST CHARGES$/i.test(t)) { inPurchases = false; inFees = false; inInterest = true; continue }
+    // Stop sections
+    if (/^INTEREST CHARGES$/i.test(t)) { continue } // This is the summary header, not the section
+    if (/^TOTAL /i.test(t) || /^Year-to-date/i.test(t)) { continue }
+    if (/^ACCOUNT ACTIVITY/i.test(t) || /YOUR ACCOUNT MESSAGES/i.test(t)) { continue }
 
     const m = t.match(txRe)
     if (m && (inPurchases || inFees || inInterest)) {

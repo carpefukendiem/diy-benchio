@@ -39,14 +39,18 @@ const CATEGORIES = [
   "Other Income",
   "Refunds Given",
   "Advertising & Marketing",
+  "Soccer Team Sponsorship",
   "Social Media & Online Presence",
   "Software & Web Hosting Expense",
   "Business Meals Expense",
   "Gas & Auto Expense",
+  "Parking Expense",
   "Bank & ATM Fee Expense",
   "Insurance Expense - Business",
+  "Health Insurance",
   "Merchant Processing Fees",
   "Office Supplies",
+  "Office Kitchen Supplies",
   "Phone & Internet Expense",
   "Professional Service Expense",
   "Tax Software & Services",
@@ -54,17 +58,23 @@ const CATEGORIES = [
   "Rent Expense",
   "Utilities Expense",
   "Home Office Expense",
+  "Eye Care - Business Expense",
+  "Client Gifts",
+  "Travel Expense",
+  "Business Treasury Investment",
+  "Owner Draw",
   "Member Drawing - Ruben Ruiz",
   "Member Contribution - Ruben Ruiz",
   "Internal Transfer",
   "Credit Card Payment",
+  "Brokerage Transfer",
+  "Zelle / Venmo Transfer",
   "Personal Expense",
   "Personal - Groceries",
   "Personal - Entertainment",
   "Personal - Shopping",
   "Personal - Food & Drink",
   "Personal - Health",
-  "ATM Withdrawal",
 ]
 
 export function InteractiveTransactionsList({
@@ -84,10 +94,14 @@ export function InteractiveTransactionsList({
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
-      const matchesSearch =
-        transaction.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        transaction.merchantName?.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesCategory = categoryFilter === "all" || transaction.category === categoryFilter
+      const sl = searchTerm.toLowerCase()
+      const matchesSearch = !searchTerm ||
+        transaction.description.toLowerCase().includes(sl) ||
+        transaction.merchantName?.toLowerCase().includes(sl) ||
+        transaction.category?.toLowerCase().includes(sl) ||
+        transaction.amount.toString().includes(searchTerm)
+      const matchesCategory = categoryFilter === "all" || 
+        (categoryFilter === "uncategorized" ? (!transaction.category || transaction.category === "Uncategorized Expense") : transaction.category === categoryFilter)
       const matchesAccount = accountFilter === "all" || transaction.account === accountFilter
       return matchesSearch && matchesCategory && matchesAccount
     })
@@ -254,6 +268,7 @@ export function InteractiveTransactionsList({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="uncategorized">⚠ Uncategorized Only</SelectItem>
                 {CATEGORIES.map((category) => (
                   <SelectItem key={category} value={category}>
                     {category}

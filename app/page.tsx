@@ -225,6 +225,218 @@ export default function CaliforniaBusinessAccounting() {
     })
   }, [toast])
 
+  // Re-categorize all transactions using latest rules (client-side)
+  const handleRecategorize = useCallback(() => {
+    if (!currentBusiness || currentBusiness.transactions.length === 0) {
+      toast({ title: "No transactions", description: "Upload statements first" })
+      return
+    }
+
+    // Simple client-side rule matching (mirrors the server rules)
+    const RULES: Array<{ pattern: string; category: string; isIncome?: boolean }> = [
+      // Income
+      { pattern: "upwork", category: "Freelance Income", isIncome: true },
+      { pattern: "stripe transfer", category: "Sales Revenue", isIncome: true },
+      { pattern: "stripe payout", category: "Sales Revenue", isIncome: true },
+      { pattern: "fiverr", category: "Freelance Income", isIncome: true },
+      // Software
+      { pattern: "ghl", category: "Software & Web Hosting Expense" },
+      { pattern: "highlevel", category: "Software & Web Hosting Expense" },
+      { pattern: "go high level", category: "Software & Web Hosting Expense" },
+      { pattern: "semrush", category: "Software & Web Hosting Expense" },
+      { pattern: "ahrefs", category: "Software & Web Hosting Expense" },
+      { pattern: "google *gsuite", category: "Software & Web Hosting Expense" },
+      { pattern: "apple.com", category: "Software & Web Hosting Expense" },
+      { pattern: "siteground", category: "Software & Web Hosting Expense" },
+      { pattern: "bitdefender", category: "Software & Web Hosting Expense" },
+      { pattern: "2cocom", category: "Software & Web Hosting Expense" },
+      { pattern: "adobe", category: "Software & Web Hosting Expense" },
+      { pattern: "canva", category: "Software & Web Hosting Expense" },
+      { pattern: "namecheap", category: "Software & Web Hosting Expense" },
+      { pattern: "godaddy", category: "Software & Web Hosting Expense" },
+      { pattern: "cloudflare", category: "Software & Web Hosting Expense" },
+      { pattern: "zoom", category: "Software & Web Hosting Expense" },
+      { pattern: "chatgpt", category: "Software & Web Hosting Expense" },
+      { pattern: "openai", category: "Software & Web Hosting Expense" },
+      { pattern: "microsoft", category: "Software & Web Hosting Expense" },
+      { pattern: "mailchimp", category: "Software & Web Hosting Expense" },
+      // Advertising
+      { pattern: "google ads", category: "Advertising & Marketing" },
+      { pattern: "facebk", category: "Advertising & Marketing" },
+      { pattern: "facebook", category: "Advertising & Marketing" },
+      { pattern: "vistaprint", category: "Advertising & Marketing" },
+      { pattern: "yelp", category: "Advertising & Marketing" },
+      // Soccer Sponsorship
+      { pattern: "aggressive socc", category: "Soccer Team Sponsorship" },
+      { pattern: "affirm inc affirm", category: "Soccer Team Sponsorship" },
+      // Gas & Auto
+      { pattern: "shell oil", category: "Gas & Auto Expense" },
+      { pattern: "chevron", category: "Gas & Auto Expense" },
+      { pattern: "arco", category: "Gas & Auto Expense" },
+      { pattern: "costco gas", category: "Gas & Auto Expense" },
+      { pattern: "uber", category: "Gas & Auto Expense" },
+      { pattern: "lyft", category: "Gas & Auto Expense" },
+      { pattern: "ptgc llc", category: "Gas & Auto Expense" },
+      { pattern: "mccormix oil", category: "Gas & Auto Expense" },
+      { pattern: "mccormick oil", category: "Gas & Auto Expense" },
+      // Parking
+      { pattern: "city of sb dtp", category: "Parking Expense" },
+      { pattern: "wf pkg", category: "Parking Expense" },
+      { pattern: "hotel californian", category: "Parking Expense" },
+      // Business Meals
+      { pattern: "cajun kitchen", category: "Business Meals Expense" },
+      { pattern: "starbucks", category: "Business Meals Expense" },
+      { pattern: "lighthouse cof", category: "Business Meals Expense" },
+      { pattern: "sweet creams", category: "Business Meals Expense" },
+      { pattern: "pressed juicery", category: "Business Meals Expense" },
+      { pattern: "in-n-out", category: "Business Meals Expense" },
+      { pattern: "chipotle", category: "Business Meals Expense" },
+      { pattern: "wingstop", category: "Business Meals Expense" },
+      { pattern: "little caesars", category: "Business Meals Expense" },
+      { pattern: "mony's", category: "Business Meals Expense" },
+      { pattern: "taqueria lilly", category: "Business Meals Expense" },
+      { pattern: "panino", category: "Business Meals Expense" },
+      { pattern: "thedailygrind", category: "Business Meals Expense" },
+      { pattern: "habit", category: "Business Meals Expense" },
+      { pattern: "south coast deli", category: "Business Meals Expense" },
+      { pattern: "dlr coffee", category: "Business Meals Expense" },
+      { pattern: "cheesecake", category: "Business Meals Expense" },
+      { pattern: "dlr pym", category: "Business Meals Expense" },
+      { pattern: "napolini", category: "Business Meals Expense" },
+      { pattern: "nikka japanese", category: "Business Meals Expense" },
+      { pattern: "eller's donut", category: "Business Meals Expense" },
+      { pattern: "mcconnell's", category: "Business Meals Expense" },
+      { pattern: "shalhoob", category: "Business Meals Expense" },
+      { pattern: "tst*benchmark", category: "Business Meals Expense" },
+      { pattern: "tst*sama", category: "Business Meals Expense" },
+      { pattern: "stdaa-ventura", category: "Business Meals Expense" },
+      { pattern: "dart coffee", category: "Business Meals Expense" },
+      // Office Supplies
+      { pattern: "powell peralta", category: "Office Supplies" },
+      { pattern: "staples", category: "Office Supplies" },
+      { pattern: "office depot", category: "Office Supplies" },
+      { pattern: "miner's ace", category: "Office Supplies" },
+      { pattern: "michaels stores", category: "Office Supplies" },
+      { pattern: "sp powertoolsadapt", category: "Office Supplies" },
+      // Office Kitchen
+      { pattern: "ralphs", category: "Office Kitchen Supplies" },
+      { pattern: "trader joe", category: "Office Kitchen Supplies" },
+      { pattern: "beverages & mor", category: "Office Kitchen Supplies" },
+      { pattern: "dollartree", category: "Office Kitchen Supplies" },
+      { pattern: "costco whse", category: "Office Kitchen Supplies" },
+      { pattern: "smart & final", category: "Office Kitchen Supplies" },
+      // Eye Care
+      { pattern: "bream optometry", category: "Eye Care - Business Expense" },
+      { pattern: "cvs/pharm", category: "Eye Care - Business Expense" },
+      { pattern: "cvs/pharmacy", category: "Eye Care - Business Expense" },
+      { pattern: "rite aid", category: "Eye Care - Business Expense" },
+      { pattern: "milpas liquor", category: "Eye Care - Business Expense" },
+      { pattern: "liquor & deli santa", category: "Eye Care - Business Expense" },
+      { pattern: "talevi's wines", category: "Eye Care - Business Expense" },
+      { pattern: "walgreens", category: "Eye Care - Business Expense" },
+      // Client Gifts
+      { pattern: "rocket fizz", category: "Client Gifts" },
+      { pattern: "dlr off the page", category: "Client Gifts" },
+      { pattern: "dlr studio store", category: "Client Gifts" },
+      { pattern: "dlr seaside", category: "Client Gifts" },
+      { pattern: "sq *dandy", category: "Client Gifts" },
+      { pattern: "pet house", category: "Client Gifts" },
+      { pattern: "market l", category: "Client Gifts" },
+      // Travel
+      { pattern: "dlr wdtc", category: "Travel Expense" },
+      // Health Insurance
+      { pattern: "health insurance", category: "Health Insurance" },
+      // Education
+      { pattern: "acquisitio", category: "Education & Training" },
+      // Home Office
+      { pattern: "home depot", category: "Home Office Expense" },
+      { pattern: "lowes", category: "Home Office Expense" },
+      // Phone & Internet
+      { pattern: "verizon", category: "Phone & Internet Expense" },
+      { pattern: "spectrum", category: "Phone & Internet Expense" },
+      { pattern: "comcast", category: "Phone & Internet Expense" },
+      // Utilities
+      { pattern: "so cal gas", category: "Utilities Expense" },
+      { pattern: "socal gas", category: "Utilities Expense" },
+      { pattern: "edison", category: "Utilities Expense" },
+      // Bank Fees
+      { pattern: "monthly service fee", category: "Bank & ATM Fee Expense" },
+      { pattern: "overdraft", category: "Bank & ATM Fee Expense" },
+      { pattern: "late fee", category: "Bank & ATM Fee Expense" },
+      { pattern: "interest charge", category: "Bank & ATM Fee Expense" },
+      // Insurance
+      { pattern: "geico", category: "Insurance Expense - Business" },
+      { pattern: "state farm", category: "Insurance Expense - Business" },
+      // Transfers & Owner Draws
+      { pattern: "online transfer", category: "Member Drawing - Ruben Ruiz" },
+      { pattern: "transfer to", category: "Member Drawing - Ruben Ruiz" },
+      { pattern: "transfer from", category: "Member Contribution - Ruben Ruiz" },
+      { pattern: "chase crd epay", category: "Credit Card Payment" },
+      { pattern: "chase credit", category: "Credit Card Payment" },
+      { pattern: "barclays", category: "Credit Card Payment" },
+      { pattern: "zelle", category: "Zelle / Venmo Transfer" },
+      { pattern: "venmo", category: "Zelle / Venmo Transfer" },
+      { pattern: "atm withdrawal", category: "Owner Draw" },
+      { pattern: "atm w/d", category: "Owner Draw" },
+      { pattern: "atm cash deposit", category: "Member Contribution - Ruben Ruiz" },
+      { pattern: "schwab brokerage", category: "Brokerage Transfer" },
+      { pattern: "schwab moneylink", category: "Brokerage Transfer" },
+      { pattern: "kraken", category: "Business Treasury Investment" },
+      { pattern: "coinbase", category: "Business Treasury Investment" },
+      { pattern: "thrivecaus", category: "Owner Draw" },
+      { pattern: "nikepos", category: "Owner Draw" },
+      { pattern: "tillys", category: "Owner Draw" },
+      { pattern: "jewelry couture", category: "Owner Draw" },
+      { pattern: "cuts", category: "Owner Draw" },
+      // Personal Entertainment
+      { pattern: "netflix", category: "Personal - Entertainment" },
+      { pattern: "spotify", category: "Personal - Entertainment" },
+      { pattern: "hulu", category: "Personal - Entertainment" },
+      { pattern: "camino real cinema", category: "Personal - Entertainment" },
+      { pattern: "fairview twin", category: "Personal - Entertainment" },
+      // Personal Shopping
+      { pattern: "amazon", category: "Personal - Shopping" },
+      { pattern: "target", category: "Personal - Shopping" },
+      { pattern: "walmart", category: "Personal - Shopping" },
+      { pattern: "best buy", category: "Personal - Shopping" },
+      { pattern: "ross stores", category: "Personal - Shopping" },
+      { pattern: "billabong", category: "Personal - Shopping" },
+    ]
+
+    let updated = 0
+    const newTransactions = currentBusiness.transactions.map(t => {
+      // Skip user-categorized transactions (don't override manual edits)
+      if (t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
+        // But DO check if Upwork income is miscategorized
+        const dl = t.description.toLowerCase()
+        if (dl.includes("upwork") && !t.isIncome) {
+          updated++
+          return { ...t, category: "Freelance Income", isIncome: true }
+        }
+        return t
+      }
+
+      const dl = t.description.toLowerCase()
+      for (const rule of RULES) {
+        if (dl.includes(rule.pattern)) {
+          updated++
+          return {
+            ...t,
+            category: rule.category,
+            isIncome: rule.isIncome || false,
+          }
+        }
+      }
+      return t
+    })
+
+    updateCurrentBusiness({ transactions: newTransactions })
+    toast({
+      title: `Re-categorized ${updated} transactions`,
+      description: updated > 0 ? "Review the changes in the Transactions tab" : "All transactions already categorized",
+    })
+  }, [currentBusiness, updateCurrentBusiness, toast])
+
   // Cloud load handler — replaces localStorage data with Supabase data
   const handleCloudLoad = useCallback((cloudBusinesses: BusinessData[]) => {
     if (cloudBusinesses && cloudBusinesses.length > 0) {
@@ -359,6 +571,9 @@ export default function CaliforniaBusinessAccounting() {
                 )}
               </div>
               <div className="flex gap-2 items-center">
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={handleRecategorize} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+                  <Sparkles className="h-3.5 w-3.5" /> Re-categorize
+                </Button>
                 <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
                   businesses={businessSelectorData}
