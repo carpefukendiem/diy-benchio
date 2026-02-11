@@ -2,6 +2,16 @@ import { type NextRequest, NextResponse } from "next/server"
 import { Buffer } from "buffer"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
 
+// CRITICAL: Allow large file uploads (bank PDFs can be 5MB+)
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+}
+
+// Route segment config for Next.js App Router
+export const maxDuration = 30
+
 // ========================================
 // Category map for human-readable names
 // ========================================
@@ -56,32 +66,61 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
 // Extract text from PDF buffer
 // ========================================
 async function extractPDFText(buffer: Buffer): Promise<string> {
-  // Try pdf-parse with multiple import strategies
-  const importStrategies = [
-    async () => {
-      const mod = await import("pdf-parse")
-      const fn = mod.default || mod
-      return fn
-    },
-    async () => {
-      // Direct require as fallback
-      return require("pdf-parse")
-    },
-  ]
-
-  for (const strategy of importStrategies) {
+  // pdf-parse has a known issue: on import, it tries to load a test PDF
+  // which crashes on Vercel. We handle this with multiple fallback strategies.
+  try {
+    // Strategy 1: Dynamic import (works on Vercel when serverExternalPackages includes pdf-parse)
+    const pdfParse = (await import("pdf-parse")).default
+    const data = await pdfParse(buffer, {
+      // Disable the test file that crashes Vercel
+      max: 0, // no page limit
+    })
+    if (data && data.text && data.text.length > 50) {
+      return data.text
+    }
+  } catch (e1: any) {
+    console.log("[pdf] Dynamic import failed:", e1.message)
     try {
-      const pdfParse = await strategy()
+      // Strategy 2: require (works in some Node.js environments)
+      const pdfParse = require("pdf-parse")
       const data = await pdfParse(buffer)
       if (data && data.text && data.text.length > 50) {
         return data.text
       }
-    } catch (e: any) {
-      console.log("[pdf] Strategy failed:", e.message)
+    } catch (e2: any) {
+      console.log("[pdf] Require failed:", e2.message)
     }
   }
 
-  throw new Error("Could not extract text from PDF. Try downloading as CSV from Wells Fargo instead.")
+  // Strategy 3: Manual extraction for simple text PDFs
+  // Many bank PDFs have text directly in the buffer
+  try {
+    const textContent = buffer.toString("utf-8")
+    // Look for common bank statement patterns in raw text
+    if (textContent.includes("wells fargo") || textContent.includes("Wells Fargo") ||
+        textContent.includes("chase") || textContent.includes("barclays")) {
+      // Extract readable text between stream/endstream markers
+      const streams = textContent.match(/stream\r?\n([\s\S]*?)endstream/g)
+      if (streams) {
+        const text = streams.map(s => {
+          const content = s.replace(/^stream\r?\n/, "").replace(/endstream$/, "")
+          // Filter to only printable ASCII
+          return content.replace(/[^\x20-\x7E\n\r]/g, " ").replace(/\s+/g, " ").trim()
+        }).filter(s => s.length > 20).join("\n")
+        if (text.length > 100) return text
+      }
+    }
+  } catch (e3: any) {
+    console.log("[pdf] Manual extraction failed:", e3.message)
+  }
+
+  throw new Error(
+    "Could not extract text from this PDF. This usually means pdf-parse failed to initialize. " +
+    "Try these alternatives:\n" +
+    "1. Download your statement as CSV instead of PDF from your bank's website\n" +
+    "2. Try a different browser to download the PDF\n" +
+    "3. Make sure the PDF is a digital statement (not a scanned image)"
+  )
 }
 
 // ========================================
@@ -89,7 +128,7 @@ async function extractPDFText(buffer: Buffer): Promise<string> {
 // ========================================
 function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" | "unknown" {
   const t = text.toLowerCase()
-  if (t.includes("wells fargo") || t.includes("transaction history") && t.includes("purchase authorized")) return "wellsfargo"
+  if (t.includes("wells fargo") || (t.includes("transaction history") && t.includes("purchase authorized"))) return "wellsfargo"
   if (t.includes("chase freedom") || t.includes("chase.com/cardhelp") || t.includes("cardmember service")) return "chase"
   if (t.includes("barclays") || t.includes("barclaysus.com") || t.includes("barclays view")) return "barclays"
   // Fallback heuristics
@@ -321,7 +360,7 @@ function parseWFText(text: string) {
 
   for (const line of lines) {
     const t = line.trim()
-    if (/transaction history/i.test(t)) { inSection = true; continue }
+    if (/transaction history/i.test(t) || /account activity/i.test(t) || /checking.*statement/i.test(t)) { inSection = true; continue }
     if (/^Totals|Monthly service fee summary|Account transaction fees/i.test(t)) {
       if (cur) { txns.push(cur); cur = null }
       inSection = false; continue
@@ -351,6 +390,37 @@ function parseWFText(text: string) {
     }
   }
   if (cur) txns.push(cur)
+
+  // FALLBACK: If section-based parsing found nothing, try parsing entire document
+  if (txns.length === 0) {
+    console.log("[wf] Section-based parsing found 0 txns, trying full-document fallback")
+    let fallbackCur: any = null
+    for (const line of lines) {
+      const t = line.trim()
+      if (t.length < 5) continue
+      const m = t.match(txRe)
+      if (m) {
+        if (fallbackCur) txns.push(fallbackCur)
+        const mn = parseInt(m[1]), dy = parseInt(m[2]), rest = m[3]
+        const amts = rest.match(/[\d,]+\.\d{2}/g) || []
+        const desc = rest.replace(/\s+[\d,]+\.\d{2}/g,"").replace(/\s*-[\d,]+\.\d{2}/g,"").trim()
+        const amount = amts.length ? parseFloat(amts[0].replace(/,/g,"")) : 0
+        const dl = desc.toLowerCase()
+        const isCr = creditKW.some(k => dl.includes(k))
+        if (amount > 0 && desc.length > 2 && !/^Date\b/i.test(desc) && !/^Ending/i.test(desc)) {
+          fallbackCur = {
+            date: `${year}-${String(mn).padStart(2,"0")}-${String(dy).padStart(2,"0")}`,
+            description: desc, amount, type: isCr ? "credit" : "debit", raw_line: t,
+          }
+        } else { fallbackCur = null }
+      } else if (fallbackCur) {
+        let extra = t.replace(/\s*-?[\d,]+\.\d{2}\s*/g,"").replace(/[SP]\d{15,}/g,"").replace(/Card \d{4}$/,"").trim()
+        if (extra && !/^\d+$/.test(extra) && extra.length < 100) fallbackCur.description += " " + extra
+      }
+    }
+    if (fallbackCur) txns.push(fallbackCur)
+    console.log(`[wf] Fallback found ${txns.length} transactions`)
+  }
 
   const monthNum = parseInt(stmtMonth.split("-")[1] || "1")
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
