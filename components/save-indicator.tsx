@@ -11,18 +11,26 @@ interface SaveIndicatorProps {
   onLoad?: (data: any) => void
 }
 
-// Client-side Supabase REST calls (runs in browser — no Vercel network restrictions)
+// Get Supabase config — tries env vars first, falls back to hardcoded
 function getSupabaseConfig() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !key) return null
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://doohzrogvbfphqgpurnu.supabase.co"
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+  
+  // If no key from env, try to find it in the page
+  if (!key) {
+    // The key needs to be provided — check localStorage for cached config
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("_supabase_key")
+      if (cached) return { url, key: cached }
+    }
+    return null
+  }
   return { url, key }
 }
 
-async function supabaseClientFetch(path: string, options: RequestInit = {}) {
+async function supabaseFetch(path: string, options: RequestInit = {}) {
   const config = getSupabaseConfig()
   if (!config) return null
-
   try {
     const res = await fetch(`${config.url}/rest/v1${path}`, {
       ...options,
@@ -35,19 +43,18 @@ async function supabaseClientFetch(path: string, options: RequestInit = {}) {
       },
     })
     return res
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
 
 export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
   const [status, setStatus] = useState<SaveStatus>("idle")
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [supabaseAvailable, setSupabaseAvailable] = useState(false)
+  const [showKeyInput, setShowKeyInput] = useState(false)
+  const [keyInput, setKeyInput] = useState("")
   const prevDataRef = useRef<string>("")
   const loadedRef = useRef(false)
 
-  // Track changes
   useEffect(() => {
     if (businesses.length === 0) return
     const dataStr = JSON.stringify(businesses)
@@ -57,7 +64,6 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
     prevDataRef.current = dataStr
   }, [businesses])
 
-  // Auto-load on mount
   useEffect(() => {
     if (loadedRef.current) return
     loadedRef.current = true
@@ -65,15 +71,8 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
   }, [])
 
   const loadFromCloud = useCallback(async () => {
-    const config = getSupabaseConfig()
-    if (!config) {
-      setSupabaseAvailable(false)
-      setStatus("idle")
-      return
-    }
-
     try {
-      const res = await supabaseClientFetch("/app_state?id=eq.default&select=data,updated_at")
+      const res = await supabaseFetch("/app_state?id=eq.default&select=data,updated_at")
       if (res && res.ok) {
         const rows = await res.json()
         if (rows.length > 0 && rows[0].data?.businesses) {
@@ -83,13 +82,12 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
           setStatus("saved")
           return
         }
-        setSupabaseAvailable(true)
-        return
+        if (rows.length > 0) {
+          setSupabaseAvailable(true)
+          return
+        }
       }
-    } catch {
-      // silent
-    }
-
+    } catch {}
     setSupabaseAvailable(false)
     setStatus("idle")
   }, [onLoad])
@@ -98,102 +96,121 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
     if (businesses.length === 0) return
     setStatus("saving")
 
-    // Always save to localStorage (instant, reliable)
+    // Always save localStorage
+    try { localStorage.setItem("businesses", JSON.stringify(businesses)) } catch {}
+
+    // Try Supabase
     try {
-      localStorage.setItem("businesses", JSON.stringify(businesses))
-    } catch {}
+      const payload = {
+        data: { businesses, savedAt: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      }
 
-    // Try Supabase from browser
-    const config = getSupabaseConfig()
-    if (config) {
-      try {
-        const payload = {
-          data: { businesses, savedAt: new Date().toISOString() },
-          updated_at: new Date().toISOString(),
-        }
+      const res = await supabaseFetch("/app_state?id=eq.default", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      })
 
-        // Try PATCH (update existing row)
-        const res = await supabaseClientFetch("/app_state?id=eq.default", {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        })
-
-        if (res && res.ok) {
-          const result = await res.json()
-          if (Array.isArray(result) && result.length === 0) {
-            // No row existed — INSERT
-            const insertRes = await supabaseClientFetch("/app_state", {
-              method: "POST",
-              body: JSON.stringify({ id: "default", ...payload }),
-              headers: { "Prefer": "return=representation,resolution=merge-duplicates" } as any,
-            })
-            if (insertRes && insertRes.ok) {
-              setSupabaseAvailable(true)
-              setStatus("saved")
-              setLastSaved(new Date().toISOString())
-              setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
-              return
-            }
-          } else {
+      if (res && res.ok) {
+        const result = await res.json()
+        if (Array.isArray(result) && result.length === 0) {
+          // No row — INSERT
+          const insertRes = await supabaseFetch("/app_state", {
+            method: "POST",
+            body: JSON.stringify({ id: "default", ...payload }),
+            headers: { "Prefer": "return=representation,resolution=merge-duplicates" } as any,
+          })
+          if (insertRes && insertRes.ok) {
             setSupabaseAvailable(true)
             setStatus("saved")
             setLastSaved(new Date().toISOString())
             setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
             return
           }
+        } else {
+          setSupabaseAvailable(true)
+          setStatus("saved")
+          setLastSaved(new Date().toISOString())
+          setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
+          return
         }
-      } catch {
-        // Supabase failed
       }
-    }
+    } catch {}
 
-    // Supabase unavailable — localStorage only
+    // Supabase failed — show saved locally
     setSupabaseAvailable(false)
     setStatus("saved")
     setLastSaved(new Date().toISOString())
     setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
   }, [businesses])
 
+  const handleKeySubmit = useCallback(() => {
+    if (keyInput.trim()) {
+      localStorage.setItem("_supabase_key", keyInput.trim())
+      setShowKeyInput(false)
+      setKeyInput("")
+      // Retry connection
+      loadFromCloud()
+    }
+  }, [keyInput, loadFromCloud])
+
   const dotColor = {
-    idle: "bg-gray-400",
-    saving: "bg-yellow-400 animate-pulse",
-    saved: "bg-green-500",
-    error: "bg-red-500",
-    unsaved: "bg-yellow-400",
+    idle: "bg-gray-400", saving: "bg-yellow-400 animate-pulse",
+    saved: "bg-green-500", error: "bg-red-500", unsaved: "bg-yellow-400",
   }[status]
 
   const statusText = {
     idle: lastSaved ? `Saved ${new Date(lastSaved).toLocaleTimeString()}` : "Ready",
     saving: "Saving...",
-    saved: supabaseAvailable ? "Saved to cloud ✓" : "Saved locally ✓",
-    error: "Save failed",
-    unsaved: "Unsaved changes",
+    saved: supabaseAvailable ? "Cloud ✓" : "Local ✓",
+    error: "Failed", unsaved: "Unsaved",
   }[status]
 
   const icon = {
-    idle: supabaseAvailable ? <Cloud className="h-4 w-4" /> : <HardDrive className="h-4 w-4" />,
-    saving: <Loader2 className="h-4 w-4 animate-spin" />,
-    saved: <Check className="h-4 w-4 text-green-600" />,
-    error: <CloudOff className="h-4 w-4 text-red-500" />,
-    unsaved: <Save className="h-4 w-4 text-yellow-600" />,
+    idle: supabaseAvailable ? <Cloud className="h-3.5 w-3.5" /> : <HardDrive className="h-3.5 w-3.5" />,
+    saving: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+    saved: <Check className="h-3.5 w-3.5 text-green-600" />,
+    error: <CloudOff className="h-3.5 w-3.5 text-red-500" />,
+    unsaved: <Save className="h-3.5 w-3.5 text-yellow-600" />,
   }[status]
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={saveToCloud}
-      disabled={status === "saving" || businesses.length === 0}
-      className={`h-8 gap-2 transition-all ${
-        status === "saved" ? "border-green-300 bg-green-50 text-green-700" :
-        status === "unsaved" ? "border-yellow-300 bg-yellow-50 text-yellow-700" :
-        status === "error" ? "border-red-300 bg-red-50 text-red-700" :
-        ""
-      }`}
-    >
-      <span className={`h-2 w-2 rounded-full transition-colors duration-500 ${dotColor}`} />
-      {icon}
-      <span className="text-xs hidden sm:inline">{statusText}</span>
-    </Button>
+    <div className="flex items-center gap-1">
+      <Button
+        variant="outline" size="sm"
+        onClick={saveToCloud}
+        disabled={status === "saving" || businesses.length === 0}
+        className={`h-8 gap-1.5 text-xs transition-all ${
+          status === "saved" ? "border-green-300 bg-green-50 text-green-700" :
+          status === "unsaved" ? "border-yellow-300 bg-yellow-50 text-yellow-700" :
+          status === "error" ? "border-red-300 bg-red-50 text-red-700" : ""
+        }`}
+      >
+        <span className={`h-2 w-2 rounded-full transition-colors duration-500 ${dotColor}`} />
+        {icon}
+        <span className="hidden sm:inline">{statusText}</span>
+      </Button>
+
+      {!supabaseAvailable && status !== "saving" && (
+        <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground"
+          onClick={() => setShowKeyInput(!showKeyInput)}>
+          <Cloud className="h-3 w-3 mr-1" /> Connect
+        </Button>
+      )}
+
+      {showKeyInput && (
+        <div className="flex items-center gap-1">
+          <input
+            type="password"
+            placeholder="Paste Supabase anon key..."
+            value={keyInput}
+            onChange={e => setKeyInput(e.target.value)}
+            className="h-8 text-xs border rounded px-2 w-64"
+            onKeyDown={e => e.key === "Enter" && handleKeySubmit()}
+          />
+          <Button size="sm" className="h-8 text-xs" onClick={handleKeySubmit}>Save</Button>
+        </div>
+      )}
+    </div>
   )
 }

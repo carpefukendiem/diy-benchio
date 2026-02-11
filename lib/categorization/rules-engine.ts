@@ -107,7 +107,7 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'zelle from', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.70 },
 
   // === PERSONAL ===
-  { pattern: 'atm withdrawal', match: 'contains', category_id: '00000000-0000-0000-0004-000000000007', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'atm withdrawal', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'costco', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.75 },
   { pattern: 'sprouts', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.75 },
   // === BUSINESS MEALS — Line 24b (50% deductible) ===
@@ -161,6 +161,83 @@ const BUILT_IN_RULES: Array<{
   
   // === MEALS (ambiguous — default business with lower confidence) ===
   { pattern: 'lighthouse cof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
+
+  // === ADDITIONAL BUSINESS SOFTWARE & HOSTING ===
+  { pattern: 'adobe', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'microsoft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'canva', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'namecheap', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'godaddy', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'cloudflare', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hostinger', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'squarespace', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'wix', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'zoom', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'slack', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'dropbox', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'chatgpt', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'openai', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'anthropic', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  
+  // === PHONE & INTERNET ===
+  { pattern: 'verizon', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'spectrum', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'cox comm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'comcast', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'at&t', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 't-mobile', match: 'contains', category_id: '00000000-0000-0000-0002-000000000021', is_personal: false, is_transfer: false, confidence: 0.80 },
+  
+  // === UTILITIES ===
+  { pattern: 'water', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'electric', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'socal gas', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'pg&e', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.80 },
+  
+  // === PERSONAL — SHOPPING ===
+  { pattern: 'amazon', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.65 },
+  { pattern: 'target', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'walmart', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'ross stores', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'marshalls', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'tj maxx', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  
+  // === PERSONAL — ENTERTAINMENT ===
+  { pattern: 'netflix', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'spotify', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hulu', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'disney plus', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'youtube', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'playstation', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'xbox', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'steam', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.80 },
+  
+  // === PERSONAL — HEALTH ===
+  { pattern: 'pharmacy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'walgreens', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
+  
+  // === TRANSFERS — catch more patterns ===
+  { pattern: 'venmo', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.80 },
+  { pattern: 'paypal', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.75 },
+  { pattern: 'cash app', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.80 },
+  
+  // === RIDESHARE / TRANSPORT ===
+  { pattern: 'lyft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.75 },
+  
+  // === OFFICE / HOME OFFICE ===
+  { pattern: 'lowes', match: 'contains', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'staples', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'office depot', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.85 },
+  
+  // === INSURANCE ===
+  { pattern: 'geico', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'state farm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'progressive', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'allstate', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  
+  // === SERVICE FEE catch-alls ===
+  { pattern: 'monthly service fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'overdraft fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'service charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.85 },
 ];
 
 export function categorizeByRules(
