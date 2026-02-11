@@ -89,19 +89,68 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       return
     }
 
+    // =============================================
+    // DUPLICATE FILE DETECTION
+    // Check if any of the selected files were already uploaded
+    // =============================================
+    const existingFileKeys = new Set<string>()
+    existingStatements.forEach(s => {
+      // Build keys from existing statement transactions for matching
+      s.transactions.forEach(t => {
+        existingFileKeys.add(`${t.date}|${t.description}|${t.amount}`)
+      })
+    })
+
+    // Also track file names already uploaded (stored in localStorage)
+    const uploadedFileNames: string[] = JSON.parse(localStorage.getItem("uploadedFileNames") || "[]")
+    const skippedFiles: string[] = []
+    const filesToProcess: File[] = []
+
+    for (const file of Array.from(files)) {
+      const fileKey = `${accountName}::${file.name}::${file.size}`
+      if (uploadedFileNames.includes(fileKey)) {
+        skippedFiles.push(file.name)
+      } else {
+        filesToProcess.push(file)
+      }
+    }
+
+    if (skippedFiles.length > 0 && filesToProcess.length === 0) {
+      toast({
+        title: "Duplicate Upload Blocked",
+        description: `${skippedFiles.join(", ")} ${skippedFiles.length === 1 ? "has" : "have"} already been uploaded to "${accountName}". Delete the existing statement first if you want to re-upload.`,
+        variant: "destructive",
+      })
+      event.target.value = ""
+      return
+    }
+
+    if (skippedFiles.length > 0) {
+      toast({
+        title: "Some Files Skipped",
+        description: `${skippedFiles.join(", ")} already uploaded. Processing ${filesToProcess.length} new file(s).`,
+      })
+    }
+
+    if (filesToProcess.length === 0) {
+      event.target.value = ""
+      return
+    }
+
     setIsUploading(true)
     saveAccountName(accountName)
 
-    const progress: FileProgress[] = Array.from(files).map(f => ({
+    const progress: FileProgress[] = filesToProcess.map(f => ({
       fileName: f.name, status: "pending" as const, transactionCount: 0,
     }))
     setFileProgress(progress)
 
     const successFiles: typeof processedFiles = []
     let allTxns: any[] = []
+    const newUploadedFileNames: string[] = []
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const file = filesToProcess[i]
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
 
       try {
@@ -115,11 +164,42 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         if (response.ok) {
           const data = await response.json()
           if (data.transactions && data.transactions.length > 0) {
+            // =============================================
+            // DUPLICATE TRANSACTION DEDUPLICATION
+            // Remove any transactions that already exist
+            // =============================================
+            const uniqueTransactions = data.transactions.filter((t: any) => {
+              const key = `${t.date}|${t.description}|${t.amount}`
+              return !existingFileKeys.has(key)
+            })
+
+            const dupeCount = data.transactions.length - uniqueTransactions.length
+
+            if (uniqueTransactions.length === 0) {
+              setFileProgress(prev => prev.map((p, idx) =>
+                idx === i ? { ...p, status: "error", error: `All ${data.transactions.length} transactions already exist (duplicate upload)` } : p
+              ))
+              continue
+            }
+
+            if (dupeCount > 0) {
+              toast({
+                title: `${dupeCount} Duplicate Transactions Removed`,
+                description: `${uniqueTransactions.length} new transactions kept from ${file.name}.`,
+              })
+            }
+
             setFileProgress(prev => prev.map((p, idx) =>
-              idx === i ? { ...p, status: "parsed", transactionCount: data.transactions.length, month: data.month, year: data.year } : p
+              idx === i ? { ...p, status: "parsed", transactionCount: uniqueTransactions.length, month: data.month, year: data.year } : p
             ))
-            successFiles.push({ fileName: file.name, month: data.month || "Unknown", year: data.year || "2025", transactions: data.transactions })
-            allTxns = allTxns.concat(data.transactions)
+            successFiles.push({ fileName: file.name, month: data.month || "Unknown", year: data.year || "2025", transactions: uniqueTransactions })
+            allTxns = allTxns.concat(uniqueTransactions)
+            newUploadedFileNames.push(`${accountName}::${file.name}::${file.size}`)
+
+            // Add new transactions to the existingFileKeys set so subsequent files in the same batch also get deduped
+            uniqueTransactions.forEach((t: any) => {
+              existingFileKeys.add(`${t.date}|${t.description}|${t.amount}`)
+            })
           } else {
             setFileProgress(prev => prev.map((p, idx) =>
               idx === i ? { ...p, status: "error", error: "No transactions found" } : p
@@ -136,6 +216,12 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
           idx === i ? { ...p, status: "error", error: error.message || "Network error" } : p
         ))
       }
+    }
+
+    // Persist uploaded file names to localStorage
+    if (newUploadedFileNames.length > 0) {
+      const allUploaded = [...uploadedFileNames, ...newUploadedFileNames]
+      localStorage.setItem("uploadedFileNames", JSON.stringify(allUploaded))
     }
 
     setIsUploading(false)
@@ -202,6 +288,24 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   }
 
   const handleDeleteStatement = (id: string) => {
+    // Find the statement being deleted so we can remove its file tracking
+    const deletedStatement = existingStatements.find(s => s.id === id)
+    if (deletedStatement) {
+      // Remove the file name tracking so re-upload is allowed
+      const uploadedFileNames: string[] = JSON.parse(localStorage.getItem("uploadedFileNames") || "[]")
+      const prefix = `${deletedStatement.accountName}::`
+      const updated = uploadedFileNames.filter(fn => {
+        // Remove entries matching this account + statement period
+        if (!fn.startsWith(prefix)) return true
+        // Keep entries that don't match (conservative — remove all for this account if unclear)
+        return false
+      })
+      // Re-add entries from other still-existing statements for this account
+      existingStatements.filter(s => s.id !== id && s.accountName === deletedStatement.accountName).forEach(s => {
+        // We don't have the original file info, so we leave tracking clean for remaining statements
+      })
+      localStorage.setItem("uploadedFileNames", JSON.stringify(updated))
+    }
     onStatementsUpdate(existingStatements.filter((s) => s.id !== id))
     toast({ title: "Statement Deleted" })
   }
