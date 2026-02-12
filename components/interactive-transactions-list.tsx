@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { EditableCell } from "@/components/editable-cell"
-import { RefreshCw, Search, Download, Edit3 } from "lucide-react"
+import { RefreshCw, Search, Download, Edit3, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 interface Transaction {
@@ -196,6 +196,82 @@ export function InteractiveTransactionsList({
     a.click()
   }
 
+  const exportToPDF = async () => {
+    try {
+      const { default: jsPDF } = await import("jspdf")
+      const autoTable = (await import("jspdf-autotable")).default
+
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" })
+
+      // Title
+      doc.setFontSize(16)
+      doc.text("Transaction Report", 14, 15)
+      doc.setFontSize(9)
+      doc.setTextColor(100)
+      doc.text(`Generated: ${new Date().toLocaleDateString()} | ${filteredTransactions.length} transactions`, 14, 21)
+      doc.setTextColor(0)
+
+      // Summary
+      const totalIncome = filteredTransactions.filter(t => t.isIncome).reduce((s, t) => s + t.amount, 0)
+      const totalExpenses = filteredTransactions.filter(t => !t.isIncome).reduce((s, t) => s + t.amount, 0)
+      doc.setFontSize(10)
+      doc.text(`Total Income: $${totalIncome.toLocaleString("en", { minimumFractionDigits: 2 })}`, 14, 28)
+      doc.text(`Total Expenses: $${totalExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}`, 100, 28)
+      doc.text(`Net: $${(totalIncome - totalExpenses).toLocaleString("en", { minimumFractionDigits: 2 })}`, 200, 28)
+
+      // Table
+      const tableRows = filteredTransactions.map(t => [
+        t.date,
+        t.description.length > 40 ? t.description.substring(0, 40) + "..." : t.description,
+        t.merchantName || "",
+        `$${t.amount.toLocaleString("en", { minimumFractionDigits: 2 })}`,
+        t.category,
+        t.account,
+        t.isIncome ? "Income" : "Expense",
+      ])
+
+      autoTable(doc, {
+        startY: 33,
+        head: [["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type"]],
+        body: tableRows,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 7.5 },
+        columnStyles: {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 65 },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 25, halign: "right" },
+          4: { cellWidth: 40 },
+          5: { cellWidth: 30 },
+          6: { cellWidth: 18 },
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didParseCell: (data: any) => {
+          if (data.column.index === 6 && data.section === "body") {
+            data.cell.styles.textColor = data.cell.raw === "Income" ? [22, 163, 74] : [220, 38, 38]
+          }
+        },
+      })
+
+      // Footer
+      const pageCount = (doc as any).internal.getNumberOfPages()
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        doc.setFontSize(7)
+        doc.setTextColor(150)
+        doc.text(`DIY Bench.io | Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 7)
+      }
+
+      doc.save(`transactions-${new Date().toISOString().split("T")[0]}.pdf`)
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to export to PDF",
+        variant: "destructive",
+      })
+    }
+  }
+
   const exportToExcel = async () => {
     try {
       const response = await fetch("/api/export/excel", {
@@ -239,6 +315,10 @@ export function InteractiveTransactionsList({
             <Button variant="outline" size="sm" onClick={exportToExcel}>
               <Download className="h-4 w-4 mr-2" />
               Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportToPDF}>
+              <FileText className="h-4 w-4 mr-2" />
+              PDF
             </Button>
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={isLoading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
