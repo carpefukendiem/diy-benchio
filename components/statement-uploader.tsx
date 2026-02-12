@@ -162,12 +162,12 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         let fileContent: string
 
         if (isPDF) {
-          // Extract text from PDF on the frontend using pdfjs-dist
+          // Extract text from PDF on the frontend using pdfjs-dist (no worker)
           const pdfjsLib = await import("pdfjs-dist")
-          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+          pdfjsLib.GlobalWorkerOptions.workerSrc = ""
 
           const arrayBuffer = await file.arrayBuffer()
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise
           const pages: string[] = []
 
           for (let p = 1; p <= pdf.numPages; p++) {
