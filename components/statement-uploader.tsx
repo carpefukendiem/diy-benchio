@@ -162,25 +162,16 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         let fileContent: string
 
         if (isPDF) {
-          // Extract text from PDF on the frontend using pdfjs-dist (no worker)
-          const pdfjsLib = await import("pdfjs-dist")
-          pdfjsLib.GlobalWorkerOptions.workerSrc = ""
+          // Extract text from PDF on the frontend using unpdf
+          // unpdf bundles pdfjs with the worker inlined - no CDN fetch needed
+          const { extractText, getDocumentProxy } = await import("unpdf")
 
           const arrayBuffer = await file.arrayBuffer()
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise
-          const pages: string[] = []
+          const pdf = await getDocumentProxy(new Uint8Array(arrayBuffer))
+          const { totalPages, text } = await extractText(pdf, { mergePages: true })
 
-          for (let p = 1; p <= pdf.numPages; p++) {
-            const page = await pdf.getPage(p)
-            const textContent = await page.getTextContent()
-            const pageText = textContent.items
-              .map((item: any) => item.str)
-              .join(" ")
-            pages.push(pageText)
-          }
-
-          fileContent = pages.join("\n")
-          console.log(`[v0] Extracted PDF text on frontend: ${file.name}, pages=${pdf.numPages}, textLength=${fileContent.length}`)
+          fileContent = typeof text === "string" ? text : (text as string[]).join("\n")
+          console.log(`[v0] Extracted PDF text on frontend: ${file.name}, pages=${totalPages}, textLength=${fileContent.length}`)
         } else {
           fileContent = await file.text()
           console.log(`[v0] Read CSV on frontend: ${file.name}, textLength=${fileContent.length}`)
