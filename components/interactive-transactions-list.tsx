@@ -75,6 +75,7 @@ const CATEGORIES = [
   "Personal - Shopping",
   "Personal - Food & Drink",
   "Personal - Health",
+  "Crypto / Investments",
 ]
 
 export function InteractiveTransactionsList({

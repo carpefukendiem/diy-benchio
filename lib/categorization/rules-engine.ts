@@ -17,10 +17,60 @@ export interface CategorizedTransaction extends ParsedTransaction {
   categorized_by: 'rule' | 'ai' | 'user' | null;
 }
 
+// ============================
+// Category ID → Human-readable name map (shared between server & client)
+// ============================
+export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boolean }> = {
+  "00000000-0000-0000-0001-000000000001": { name: "Sales Revenue", isIncome: true },
+  "00000000-0000-0000-0001-000000000002": { name: "Refunds Given", isIncome: true },
+  "00000000-0000-0000-0001-000000000003": { name: "Other Income", isIncome: true },
+  "00000000-0000-0000-0001-000000000004": { name: "Freelance Income", isIncome: true },
+  "00000000-0000-0000-0002-000000000001": { name: "Advertising & Marketing", isIncome: false },
+  "00000000-0000-0000-0002-000000000002": { name: "Social Media & Online Presence", isIncome: false },
+  "00000000-0000-0000-0002-000000000003": { name: "Gas & Auto Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000005": { name: "Merchant Processing Fees", isIncome: false },
+  "00000000-0000-0000-0002-000000000008": { name: "Insurance Expense - Business", isIncome: false },
+  "00000000-0000-0000-0002-000000000010": { name: "Bank & ATM Fee Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000011": { name: "Professional Service Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000012": { name: "Tax Software & Services", isIncome: false },
+  "00000000-0000-0000-0002-000000000013": { name: "Office Supplies", isIncome: false },
+  "00000000-0000-0000-0002-000000000019": { name: "Business Meals Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000020": { name: "Utilities Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000021": { name: "Phone & Internet Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000022": { name: "Software & Web Hosting Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000023": { name: "Education & Training", isIncome: false },
+  "00000000-0000-0000-0002-000000000025": { name: "Utilities Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000026": { name: "Home Office Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000030": { name: "Soccer Team Sponsorship", isIncome: false },
+  "00000000-0000-0000-0002-000000000031": { name: "Office Kitchen Supplies", isIncome: false },
+  "00000000-0000-0000-0002-000000000032": { name: "Parking Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000033": { name: "Client Gifts", isIncome: false },
+  "00000000-0000-0000-0002-000000000034": { name: "Travel Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000035": { name: "Eye Care - Business Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000036": { name: "Health Insurance", isIncome: false },
+  "00000000-0000-0000-0002-000000000037": { name: "Rent Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000038": { name: "Business Treasury Investment", isIncome: false },
+  "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isIncome: false },
+  "00000000-0000-0000-0003-000000000002": { name: "Member Contribution - Ruben Ruiz", isIncome: true },
+  "00000000-0000-0000-0003-000000000003": { name: "Internal Transfer", isIncome: false },
+  "00000000-0000-0000-0003-000000000005": { name: "Credit Card Payment", isIncome: false },
+  "00000000-0000-0000-0003-000000000006": { name: "Owner Draw", isIncome: false },
+  "00000000-0000-0000-0003-000000000007": { name: "Brokerage Transfer", isIncome: false },
+  "00000000-0000-0000-0004-000000000001": { name: "Personal Expense", isIncome: false },
+  "00000000-0000-0000-0004-000000000002": { name: "Personal - Groceries", isIncome: false },
+  "00000000-0000-0000-0004-000000000003": { name: "Personal - Entertainment", isIncome: false },
+  "00000000-0000-0000-0004-000000000004": { name: "Personal - Shopping", isIncome: false },
+  "00000000-0000-0000-0004-000000000005": { name: "Personal - Food & Drink", isIncome: false },
+  "00000000-0000-0000-0004-000000000006": { name: "Personal - Health", isIncome: false },
+  "00000000-0000-0000-0004-000000000007": { name: "Owner Draw", isIncome: false },
+  "00000000-0000-0000-0004-000000000008": { name: "Zelle / Venmo Transfer", isIncome: false },
+  "00000000-0000-0000-0004-000000000009": { name: "Crypto / Investments", isIncome: false },
+};
+
 // Built-in rules for Ranking SB business account
 // Category ID mapping:
 // 0001-x = Income     0002-x = Business Expense     0003-x = Transfer     0004-x = Personal
-const BUILT_IN_RULES: Array<{
+export const BUILT_IN_RULES: Array<{
   pattern: string;
   match: 'contains' | 'starts_with';
   category_id: string;
@@ -305,6 +355,175 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'cuts', match: 'contains', category_id: '00000000-0000-0000-0003-000000000006', is_personal: false, is_transfer: true, confidence: 0.75 },
 
   // ============================
+  // MORE BUSINESS MEALS (0002-19) — catch common restaurant patterns
+  // ============================
+  { pattern: 'taco bell', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "mcdonald", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "wendy's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'subway', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'burger king', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'jack in the box', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'panda express', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "domino's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'pizza hut', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'doordash', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'grubhub', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'uber eats', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'postmates', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'del taco', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'popeyes', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'chick-fil-a', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'kfc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'five guys', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "denny's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'ihop', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'el pollo loco', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'tst*', match: 'starts_with', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'sq *', match: 'starts_with', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'restaurant', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'cafe', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'coffee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'pizza', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'grill', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'bakery', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'sushi', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'thai', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'bbq', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'diner', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'burrito', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'taqueria', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'brew', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'kitchen', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.60 },
+  { pattern: 'tavern', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'eatery', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'bistro', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.70 },
+
+  // ============================
+  // MORE SOFTWARE (0002-22) — catch common SaaS / tech patterns
+  // ============================
+  { pattern: 'notion', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'figma', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'github', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'vercel', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'netlify', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'aws', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'heroku', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'digital ocean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'digitalocean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hubspot', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'freshbooks', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'quickbooks', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'xero', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'calendly', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'loom', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'zapier', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'grammarly', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'asana', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'trello', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'monday.com', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'wix', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'wordpress', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'shopify', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'convertkit', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'active campaign', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'sendgrid', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'twilio', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'clickfunnels', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'kajabi', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'teachable', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'thinkific', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'jasper', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'midjourney', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'cursor', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'replit', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: '1password', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'lastpass', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'nordvpn', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'expressvpn', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+
+  // ============================
+  // MORE ADVERTISING (0002-01) — catch ad platform patterns
+  // ============================
+  { pattern: 'linkedin', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'tiktok ads', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'twitter ads', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'bing ads', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'nextdoor', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.80 },
+
+  // ============================
+  // MORE GAS STATIONS (0002-03)
+  // ============================
+  { pattern: 'mobil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'valero', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'sinclair', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'marathon petro', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'bp#', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'sunoco', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'auto zone', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'autozone', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "o'reilly", match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'car wash', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'smog', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
+
+  // ============================
+  // MORE PROFESSIONAL SERVICES (0002-11) — Schedule C Line 17
+  // ============================
+  { pattern: 'attorney', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'law office', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'legal', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'cpa', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'accountant', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'notary', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'consultant', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'legalzoom', match: 'contains', category_id: '00000000-0000-0000-0002-000000000011', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================
+  // TAX SERVICES (0002-12)
+  // ============================
+  { pattern: 'turbotax', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'h&r block', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'taxact', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'freetaxusa', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'irs gov', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.85 },
+
+  // ============================
+  // MORE EDUCATION (0002-23)
+  // ============================
+  { pattern: 'linkedin learning', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'masterclass', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'pluralsight', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'books', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.55 },
+  { pattern: 'kindle', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'audible', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'workshop', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'seminar', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'conference', match: 'contains', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false, confidence: 0.75 },
+
+  // ============================
+  // MORE OFFICE SUPPLIES (0002-13)
+  // ============================
+  { pattern: 'usps', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'fedex', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'ups store', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'stamps.com', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.85 },
+
+  // ============================
+  // MORE INSURANCE (0002-08)
+  // ============================
+  { pattern: 'farmers ins', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'nationwide', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'liberty mutual', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'usaa', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.65 },
+
+  // ============================
+  // CREDIT CARD PAYMENTS (0003-05) — Not on Schedule C
+  // ============================
+  { pattern: 'payment thank you', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.90 },
+  { pattern: 'automatic payment', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.85 },
+  { pattern: 'autopay', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.85 },
+
+  // ============================
   // PERSONAL ENTERTAINMENT (0004-03)
   // ============================
   { pattern: 'netflix', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
@@ -313,6 +532,18 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'disney plus', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
   { pattern: 'camino real cinema', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
   { pattern: 'fairview twin', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'youtube premium', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hbo max', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'paramount', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'peacock', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'apple tv', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'amc+', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'xbox', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'playstation', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'steam', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'cinema', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'theater', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'theatre', match: 'contains', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false, confidence: 0.70 },
 
   // ============================
   // PERSONAL SHOPPING (0004-04)
@@ -324,13 +555,125 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'ross stores', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'billabong', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.85 },
   { pattern: 'blenders', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'marshalls', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'tj maxx', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'nordstrom', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'macys', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: "macy's", match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'old navy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'gap', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.65 },
+  { pattern: 'h&m', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'ikea', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'bed bath', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+
+  // ============================
+  // PERSONAL HEALTH (0004-06)
+  // ============================
+  { pattern: 'doctor', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'dental', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'dentist', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'medical', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'hospital', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'urgent care', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'pharmacy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'gym', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'fitness', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'planet fitness', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'la fitness', match: 'contains', category_id: '00000000-0000-0000-0004-000000000006', is_personal: true, is_transfer: false, confidence: 0.85 },
+
+  // ============================
+  // PERSONAL GROCERIES (0004-02)
+  // ============================
+  { pattern: 'whole foods', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'safeway', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'vons', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'albertsons', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'kroger', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'sprouts', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'aldi', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'food 4 less', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'food4less', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: "stater bros", match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
 
   // ============================
   // PERSONAL — MISC
   // ============================
   { pattern: 'tradingview', match: 'contains', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: false, confidence: 0.90 },
   { pattern: 'paypal', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.70 },
+
+  // ============================
+  // CATCH-ALL HEURISTIC PATTERNS (last resort before uncategorized)
+  // These use partial keywords to guess the most likely category
+  // ============================
+  { pattern: 'recurring payment', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.50 },
+  { pattern: 'subscription', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.55 },
+  { pattern: 'save as you go', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.80 },
+  { pattern: 'recurring transfer', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.80 },
+  { pattern: 'wire transfer', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.80 },
+  { pattern: 'ach', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.55 },
+  { pattern: 'direct deposit', match: 'contains', category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.60 },
+  { pattern: 'deposit', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.50 },
 ];
+
+// Smart fallback heuristic: if no exact rule matches, use description
+// keywords + transaction characteristics to make a best guess rather
+// than leaving it uncategorized.
+export function smartFallback(tx: ParsedTransaction): {
+  category_id: string;
+  is_personal: boolean;
+  is_transfer: boolean;
+  confidence: number;
+} | null {
+  const desc = tx.description.toLowerCase();
+  const amount = tx.amount;
+
+  // Credits / deposits over $100 are likely income or transfers
+  if (amount > 0) {
+    if (desc.includes('payment') || desc.includes('credit') || desc.includes('refund')) {
+      return { category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.45 };
+    }
+    // Larger credits are likely income
+    if (amount > 500) {
+      return { category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.40 };
+    }
+    // Smaller credits could be refunds
+    return { category_id: '00000000-0000-0000-0001-000000000002', is_personal: false, is_transfer: false, confidence: 0.35 };
+  }
+
+  // Debits: try to guess based on common keywords in the description
+  const absAmount = Math.abs(amount);
+
+  // Small charges under $30 that look like food (short descriptions, city abbreviations)
+  if (absAmount < 30 && desc.length < 40 && !desc.includes('transfer') && !desc.includes('fee')) {
+    // Very short merchant names with a city — likely restaurant/shop
+    const hasCityAbbr = /\b(ca|az|nv|tx|ny|fl|wa|or|co)\b/.test(desc);
+    if (hasCityAbbr) {
+      return { category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.40 };
+    }
+  }
+
+  // Charges between $5-200 with "purchase authorized on" are card swipes — likely business expense
+  if (desc.includes('purchase authorized on') || desc.includes('pos purchase') || desc.includes('pos debit')) {
+    // It's a point-of-sale purchase; default to Office Supplies (safe generic business category)
+    if (absAmount < 50) {
+      return { category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.35 };
+    }
+    // Larger POS purchases → personal shopping as safer default
+    return { category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.35 };
+  }
+
+  // Any "fee" or "charge" in description → Bank Fee
+  if (desc.includes('fee') || desc.includes('charge') || desc.includes('penalty')) {
+    return { category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.50 };
+  }
+
+  // DLR (Disneyland Resort) prefix → Client Gifts / Entertainment
+  if (desc.includes('dlr ') || desc.includes('dlr*')) {
+    return { category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.60 };
+  }
+
+  return null;
+}
 
 export function categorizeByRules(
   transactions: ParsedTransaction[],
@@ -371,7 +714,21 @@ export function categorizeByRules(
       }
     }
     
-    // No match
+    // Smart fallback — try keyword heuristics before giving up
+    const fallback = smartFallback(tx);
+    if (fallback) {
+      return {
+        ...tx,
+        category_id: fallback.category_id,
+        schedule_c_line: null,
+        is_personal: fallback.is_personal,
+        is_transfer: fallback.is_transfer,
+        confidence: fallback.confidence,
+        categorized_by: 'rule' as const,
+      };
+    }
+    
+    // No match at all
     return {
       ...tx,
       category_id: null,
