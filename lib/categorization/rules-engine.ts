@@ -99,6 +99,7 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'semrush', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'ahrefs', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'surfer seo', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'google *gsuite_ran', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'google *gsuite', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'google workspace', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'google *cloud', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -106,6 +107,7 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'apple.com/bill', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'siteground', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: '2cocom*bitdefender', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: '2cocom', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
   { pattern: 'bitdefender', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'adobe', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'canva', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -139,6 +141,7 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   { pattern: 'aggressive socc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'affirm inc affirm pay', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'affirm inc affirm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.80 },
   { pattern: 'soccer', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.80 },
 
   // ============================
@@ -155,6 +158,7 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'uber', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.75 },
   { pattern: 'lyft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.75 },
   { pattern: 'ptgc llc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'ptgc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'mccormix oil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'mccormick oil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
 
@@ -178,6 +182,7 @@ export const BUILT_IN_RULES: Array<{
   { pattern: "mony's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'taqueria lilly', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'panino', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'habit la cumbre', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'habit', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'south coast deli', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'dlr coffee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -246,6 +251,7 @@ export const BUILT_IN_RULES: Array<{
   // TRAVEL EXPENSE (0002-34) — Schedule C Line 24a
   // ============================
   { pattern: 'dlr wdtc package', match: 'contains', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'dlr wdtc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'hotel', match: 'contains', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false, confidence: 0.70 },
   { pattern: 'marriott', match: 'contains', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false, confidence: 0.80 },
   { pattern: 'hilton', match: 'contains', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false, confidence: 0.80 },
@@ -293,6 +299,7 @@ export const BUILT_IN_RULES: Array<{
   // BANK & ATM FEES (0002-10) — Schedule C Line 16b
   // ============================
   { pattern: 'monthly service fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'overdraft protection', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'overdraft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'service charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'late fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },

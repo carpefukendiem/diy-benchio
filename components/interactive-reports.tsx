@@ -84,8 +84,8 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     const transfer: [string, typeof categoryTotals[string]][] = []
     const uncategorized: [string, typeof categoryTotals[string]][] = []
 
-    const personalKeywords = ["personal", "atm withdrawal", "crypto"]
-    const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo"]
+    const personalKeywords = ["personal", "crypto"]
+    const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
 
     Object.entries(categoryTotals).forEach(([cat, data]) => {
       const cl = cat.toLowerCase()
@@ -128,8 +128,8 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
       const mn = monthNames[d.getMonth()]
       if (!mn) return
       const cl = t.category?.toLowerCase() || ""
-      const isTransfer = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle"].some(k => cl.includes(k))
-      const isPersonal = ["personal", "atm withdrawal", "crypto"].some(k => cl.includes(k))
+      const isTransfer = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "owner draw", "brokerage transfer", "business treasury"].some(k => cl.includes(k))
+      const isPersonal = ["personal", "crypto"].some(k => cl.includes(k))
 
       if (isTransfer || isPersonal) return
       if (t.isIncome) months[mn].revenue += t.amount
