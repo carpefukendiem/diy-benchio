@@ -1,8 +1,45 @@
 import { NextResponse } from "next/server"
 import { Buffer } from "buffer"
 import { parseWellsFargoStatement } from "@/lib/parsers/wellsfargo-pdf"
+import { parseChaseCreditCardStatement } from "@/lib/parsers/chase-creditcard-pdf"
+import { parseBarclaysCreditCardStatement } from "@/lib/parsers/barclays-creditcard-pdf"
 import { parseCSVStatement } from "@/lib/parsers/csv-parser"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
+
+/**
+ * Detect which PDF statement type this is based on text content.
+ */
+function detectPDFStatementType(text: string): 'wellsfargo' | 'chase_cc' | 'barclays_cc' | 'unknown' {
+  const textLower = text.toLowerCase();
+
+  // Barclays detection — look for Barclays-specific markers
+  if (textLower.includes('barclays') || textLower.includes('barclaysus.com')) {
+    return 'barclays_cc';
+  }
+
+  // Chase Credit Card detection — look for Chase credit card markers
+  // Distinguish from Wells Fargo (which also mentions "chase" in some contexts)
+  if (
+    (textLower.includes('chase freedom') ||
+     textLower.includes('chase credit') ||
+     textLower.includes('ultimate rewards') ||
+     textLower.includes('cardmember service') ||
+     textLower.includes('chase.com/cardhelp')) &&
+    (textLower.includes('account activity') &&
+     (textLower.includes('purchase interest charge') ||
+      textLower.includes('opening/closing date') ||
+      textLower.includes('credit access line')))
+  ) {
+    return 'chase_cc';
+  }
+
+  // Wells Fargo detection
+  if (textLower.includes('wells fargo') || textLower.includes('transaction history')) {
+    return 'wellsfargo';
+  }
+
+  return 'unknown';
+}
 
 export async function POST(request: Request) {
   try {
@@ -31,18 +68,39 @@ export async function POST(request: Request) {
 
       console.log("[parse] PDF text length:", pdfData.text.length)
 
-      const result = parseWellsFargoStatement(pdfData.text)
-      parsedTransactions = result.transactions
+      // Detect statement type and use appropriate parser
+      const stmtType = detectPDFStatementType(pdfData.text)
+      console.log("[parse] Detected statement type:", stmtType)
 
-      if (result.statementMonth) {
-        const parts = result.statementMonth.split("-")
+      let resultMonth = ""
+
+      if (stmtType === 'chase_cc') {
+        const result = parseChaseCreditCardStatement(pdfData.text)
+        parsedTransactions = result.transactions
+        resultMonth = result.statementMonth
+        console.log(`[parse] Chase CC: ${parsedTransactions.length} transactions, account ending ${result.accountNumber}`)
+      } else if (stmtType === 'barclays_cc') {
+        const result = parseBarclaysCreditCardStatement(pdfData.text)
+        parsedTransactions = result.transactions
+        resultMonth = result.statementMonth
+        console.log(`[parse] Barclays CC: ${parsedTransactions.length} transactions, account ending ${result.accountNumber}`)
+      } else {
+        // Default to Wells Fargo parser
+        const result = parseWellsFargoStatement(pdfData.text)
+        parsedTransactions = result.transactions
+        resultMonth = result.statementMonth
+        console.log(`[parse] Wells Fargo: ${parsedTransactions.length} transactions`)
+      }
+
+      if (resultMonth) {
+        const parts = resultMonth.split("-")
         statementYear = parts[0] || "2025"
         const monthNum = parseInt(parts[1] || "1")
         const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
         statementMonth = monthNames[monthNum - 1] || "Unknown"
       }
 
-      console.log(`[parse] WF PDF: ${parsedTransactions.length} transactions for ${statementMonth} ${statementYear}`)
+      console.log(`[parse] PDF result: ${parsedTransactions.length} transactions for ${statementMonth} ${statementYear}`)
     }
     // === CSV PARSING ===
     else if (file.name.endsWith(".csv") || file.type === "text/csv") {
