@@ -159,7 +159,9 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         formData.append("accountName", accountName)
         formData.append("accountType", accountType)
 
+        console.log(`[v0] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`)
         const response = await fetch("/api/statements/upload", { method: "POST", body: formData })
+        console.log(`[v0] Response for ${file.name}: status=${response.status}`)
 
         if (response.ok) {
           const data = await response.json()
@@ -207,6 +209,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
           }
         } else {
           const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
+          console.log(`[v0] Error for ${file.name}:`, errData)
           setFileProgress(prev => prev.map((p, idx) =>
             idx === i ? { ...p, status: "error", error: errData.error || `Failed (${response.status})` } : p
           ))

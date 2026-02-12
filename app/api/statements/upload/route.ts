@@ -434,28 +434,220 @@ function parseWFText(text: string) {
 
 // ========================================
 // Parse CSV text into transactions
+// Handles 3 formats:
+//   1. Wells Fargo text export (no headers, multiline, amount on its own line)
+//   2. Standard CSV with headers (Date, Description, Amount OR Date, Desc, Credit, Debit)
+//   3. Chase CSV (Transaction Date, Post Date, Description, Category, Type, Amount)
 // ========================================
 function parseCSVText(csvText: string) {
-  const lines = csvText.split("\n").filter(l => l.trim())
+  const rawLines = csvText.split("\n")
+
+  // ------- Detect format -------
+  const firstNonEmpty = rawLines.find(l => l.trim().length > 0) || ""
+
+  // FORMAT 1: Standard CSV with comma-separated headers
+  if (firstNonEmpty.includes(",") && /date/i.test(firstNonEmpty)) {
+    console.log("[csv] Detected standard CSV with headers")
+    return parseStandardCSV(rawLines)
+  }
+
+  // FORMAT 2: Wells Fargo text export (starts with M/D pattern, no commas in first line typically)
+  if (/^\d{1,2}\/\d{1,2}\s/.test(firstNonEmpty.trim())) {
+    console.log("[csv] Detected Wells Fargo text export format")
+    return parseWellsFargoTextExport(rawLines)
+  }
+
+  // FORMAT 3: Try standard CSV anyway as fallback
+  console.log("[csv] Attempting standard CSV fallback")
+  return parseStandardCSV(rawLines)
+}
+
+function parseStandardCSV(lines: string[]) {
   const txns: any[] = []
-  for (const line of lines) {
-    if (/Transaction History|^Date|Check Number|Totals|Monthly service/i.test(line)) continue
-    const parts = line.split(/\t|,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(p => p.trim().replace(/^"|"$/g,""))
-    if (parts.length < 2 || !/\d{1,2}\/\d{1,2}/.test(parts[0])) continue
-    const deposits = parseFloat((parts[2]||"0").replace(/,/g,"")) || 0
-    const withdrawals = parseFloat((parts[3]||"0").replace(/,/g,"")) || 0
-    if (deposits === 0 && withdrawals === 0) continue
-    const isIncome = deposits > 0
-    const [mo, da] = parts[0].split("/")
+  let headerLine = ""
+  let dataStartIdx = 0
+
+  // Find header row
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    if (/date/i.test(lines[i]) && (lines[i].includes(",") || lines[i].includes("\t"))) {
+      headerLine = lines[i].toLowerCase()
+      dataStartIdx = i + 1
+      break
+    }
+  }
+
+  const sep = headerLine.includes("\t") ? "\t" : ","
+  const headers = headerLine.split(sep).map(h => h.trim().replace(/^"|"$/g, ""))
+
+  // Find column indices
+  const dateIdx = headers.findIndex(h => /^(transaction\s*)?date$/i.test(h))
+  const descIdx = headers.findIndex(h => /description|memo|merchant/i.test(h))
+  const amountIdx = headers.findIndex(h => /^amount$/i.test(h))
+  const creditIdx = headers.findIndex(h => /credit|deposit/i.test(h))
+  const debitIdx = headers.findIndex(h => /debit|withdrawal|withdraw/i.test(h))
+
+  for (let i = dataStartIdx; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line || /^Transaction History|^Totals|Monthly service/i.test(line)) continue
+
+    const parts = line.split(sep === "\t" ? "\t" : /,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(p => p.trim().replace(/^"|"$/g, ""))
+    if (parts.length < 2) continue
+
+    const dateStr = parts[dateIdx >= 0 ? dateIdx : 0] || ""
+    if (!/\d{1,2}\/\d{1,2}/.test(dateStr)) continue
+
+    const desc = parts[descIdx >= 0 ? descIdx : 1] || ""
+
+    let amount = 0
+    let isIncome = false
+
+    if (amountIdx >= 0) {
+      amount = parseFloat((parts[amountIdx] || "0").replace(/[,$"]/g, "")) || 0
+      isIncome = amount > 0
+      amount = Math.abs(amount)
+    } else {
+      const credit = parseFloat((parts[creditIdx >= 0 ? creditIdx : 2] || "0").replace(/[,$"]/g, "")) || 0
+      const debit = parseFloat((parts[debitIdx >= 0 ? debitIdx : 3] || "0").replace(/[,$"]/g, "")) || 0
+      if (credit === 0 && debit === 0) continue
+      isIncome = credit > 0
+      amount = Math.abs(isIncome ? credit : debit)
+    }
+
+    if (amount === 0) continue
+
+    const dateParts = dateStr.split("/")
+    const mo = (dateParts[0] || "01").padStart(2, "0")
+    const da = (dateParts[1] || "01").padStart(2, "0")
+    const yr = dateParts[2] ? (dateParts[2].length === 2 ? "20" + dateParts[2] : dateParts[2]) : "2025"
+
     txns.push({
-      date: `2025-${(mo||"01").padStart(2,"0")}-${(da||"01").padStart(2,"0")}`,
-      description: (parts[1]||"").substring(0,200),
-      amount: Math.abs(isIncome ? deposits : withdrawals),
+      date: `${yr}-${mo}-${da}`,
+      description: desc.substring(0, 200),
+      amount,
       type: isIncome ? "credit" : "debit",
       raw_line: line,
     })
   }
-  return { transactions: txns, statementMonth: "Multiple", statementYear: "2025" }
+
+  // Determine month from most common transaction month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => {
+    const m = t.date.substring(5, 7)
+    monthCounts[m] = (monthCounts[m] || 0) + 1
+  })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const stmtMonth = monthNames[parseInt(topMonth) - 1] || "Unknown"
+  const stmtYear = txns[0]?.date?.substring(0, 4) || "2025"
+
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: stmtYear }
+}
+
+function parseWellsFargoTextExport(lines: string[]) {
+  const txns: any[] = []
+  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+)/
+
+  // Credit keywords (these are deposits / income)
+  const creditKW = ["stripe transfer", "online transfer from", "deposit", "credit memo", "interest payment"]
+
+  let current: { date: string; description: string; amounts: number[]; type: string; raw: string } | null = null
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (/Transaction History|^Date\b|Check Number|Totals|Monthly service|Beginning balance|Ending balance/i.test(line)) continue
+
+    const m = line.match(txRe)
+    if (m) {
+      // Save previous transaction
+      if (current) {
+        const amount = current.amounts[0] || 0
+        if (amount > 0) {
+          txns.push({
+            date: current.date,
+            description: current.description.replace(/\s+/g, " ").trim(),
+            amount,
+            type: current.type,
+            raw_line: current.raw,
+          })
+        }
+      }
+
+      const mo = m[1].padStart(2, "0")
+      const da = m[2].padStart(2, "0")
+      const rest = m[3]
+
+      // Extract amounts from the rest of the line (could be at end)
+      const amtMatches = rest.match(/[\d,]+\.\d{2}/g)
+      const amounts = amtMatches ? amtMatches.map(a => parseFloat(a.replace(/,/g, ""))) : []
+      const desc = rest.replace(/\s+[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})?$/g, "").trim()
+
+      const dl = desc.toLowerCase()
+      const isCr = creditKW.some(k => dl.includes(k))
+
+      current = {
+        date: `2025-${mo}-${da}`,
+        description: desc,
+        amounts,
+        type: isCr ? "credit" : "debit",
+        raw: line,
+      }
+    } else if (current) {
+      // This line is a continuation OR a standalone amount
+      const pureAmount = line.match(/^([\d,]+\.\d{2})(\s+([\d,]+\.\d{2}))?$/)
+      if (pureAmount) {
+        // Line is just amount(s) -- first is transaction amount, second is running balance
+        if (current.amounts.length === 0) {
+          current.amounts.push(parseFloat(pureAmount[1].replace(/,/g, "")))
+        }
+        if (pureAmount[3]) {
+          // Second number is balance, ignore it
+        }
+      } else {
+        // Continuation of description
+        const cleaned = line.replace(/\s*[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})?$/g, "").trim()
+        if (cleaned.length > 0 && cleaned.length < 150) {
+          current.description += " " + cleaned
+          // Check if this line also has amounts at the end
+          const lineAmts = line.match(/[\d,]+\.\d{2}/g)
+          if (lineAmts && current.amounts.length === 0) {
+            current.amounts.push(parseFloat(lineAmts[0].replace(/,/g, "")))
+          }
+        }
+      }
+    }
+  }
+
+  // Don't forget the last transaction
+  if (current) {
+    const amount = current.amounts[0] || 0
+    if (amount > 0) {
+      txns.push({
+        date: current.date,
+        description: current.description.replace(/\s+/g, " ").trim(),
+        amount,
+        type: current.type,
+        raw_line: current.raw,
+      })
+    }
+  }
+
+  // Determine statement month from most common month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => {
+    const m = t.date.substring(5, 7)
+    monthCounts[m] = (monthCounts[m] || 0) + 1
+  })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+
+  console.log(`[csv-wf] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+
+  return {
+    transactions: txns,
+    statementMonth: monthNames[parseInt(topMonth) - 1] || "Unknown",
+    statementYear: "2025",
+  }
 }
 
 // ========================================

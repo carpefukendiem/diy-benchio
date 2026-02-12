@@ -18,4 +18,3 @@ export async function POST(request: NextRequest) {
     message: "Use client-side Supabase for save/load",
   })
 }
-
