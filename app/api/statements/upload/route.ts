@@ -1,9 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { generateText } from "ai"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
 
 // Route segment config for Next.js App Router
-export const maxDuration = 60
+export const maxDuration = 30
 
 // ========================================
 // Category map for human-readable names
@@ -56,96 +55,224 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
 }
 
 // ========================================
-// AI-powered PDF transaction extraction
-// Uses GPT-4o which can natively read PDFs
+// Detect statement type from extracted PDF text
 // ========================================
-async function extractTransactionsFromPDF(base64: string, fileName: string): Promise<{
-  transactions: any[];
-  statementMonth: string;
-  statementYear: string;
-}> {
-  console.log("[pdf-ai] Sending PDF to GPT-4o for extraction, base64 length:", base64.length)
-
-  const result = await generateText({
-    model: "openai/gpt-4o",
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "file",
-            data: base64,
-            mediaType: "application/pdf",
-          },
-          {
-            type: "text",
-            text: `You are a bank statement parser. Extract ALL transactions from this bank/credit card statement PDF.
-
-For EACH transaction, extract:
-- date: The transaction date in YYYY-MM-DD format
-- description: The full merchant/description text
-- amount: The dollar amount as a positive number (no $ sign, no commas)
-- type: "credit" for deposits/payments/refunds IN, "debit" for purchases/withdrawals/charges OUT
-
-Also determine:
-- statementMonth: The statement month name (e.g. "January", "February")
-- statementYear: The 4-digit year (e.g. "2025")
-
-IMPORTANT RULES:
-- Include EVERY single transaction, do not skip any
-- For credit card statements: purchases are "debit", payments are "credit"
-- For bank statements: deposits/transfers in are "credit", withdrawals/purchases are "debit"
-- Amount must always be positive
-- Do NOT include summary lines, totals, or balance rows
-- Do NOT include interest calculations or fee summaries unless they are actual line-item charges
-
-Respond with ONLY valid JSON in this exact format, nothing else:
-{
-  "statementMonth": "January",
-  "statementYear": "2025",
-  "transactions": [
-    {"date": "2025-01-02", "description": "STRIPE TRANSFER", "amount": 301.75, "type": "credit"},
-    {"date": "2025-01-03", "description": "GOHIGHLEVEL", "amount": 497.00, "type": "debit"}
-  ]
-}`,
-          },
-        ],
-      },
-    ],
-  })
-
-  const text = result.text.trim()
-  console.log("[pdf-ai] Response length:", text.length)
-
-  // Extract JSON from the response (handle markdown code blocks)
-  let jsonStr = text
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim()
-  }
-
-  try {
-    const parsed = JSON.parse(jsonStr)
-    console.log(`[pdf-ai] Parsed ${parsed.transactions?.length || 0} transactions for ${parsed.statementMonth} ${parsed.statementYear}`)
-    return {
-      transactions: (parsed.transactions || []).map((tx: any) => ({
-        date: tx.date,
-        description: tx.description,
-        amount: Math.abs(parseFloat(tx.amount) || 0),
-        type: tx.type === "credit" ? "credit" : "debit",
-        raw_line: tx.description,
-      })),
-      statementMonth: parsed.statementMonth || "Unknown",
-      statementYear: parsed.statementYear || "2025",
-    }
-  } catch (e: any) {
-    console.error("[pdf-ai] JSON parse error:", e.message, "Raw:", jsonStr.substring(0, 200))
-    throw new Error("AI could not parse this PDF. Please try uploading the CSV version instead.")
-  }
+function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" | "unknown" {
+  const t = text.toLowerCase()
+  if (t.includes("wells fargo") || (t.includes("transaction history") && t.includes("purchase authorized"))) return "wellsfargo"
+  if (t.includes("chase freedom") || t.includes("chase.com") || t.includes("cardmember service") || t.includes("account activity")) return "chase"
+  if (t.includes("barclays") || t.includes("barclaysus.com") || t.includes("barclays view")) return "barclays"
+  return "unknown"
 }
 
-// NOTE: Old regex-based PDF parsers removed.
-// PDF parsing is now handled by GPT-4o AI which can natively read any bank PDF.
+// ========================================
+// Parse Wells Fargo PDF text (extracted by pdfjs-dist on frontend)
+// ========================================
+function parseWFPDFText(text: string) {
+  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","purchase return","refund","overdraft protection from","instant pmt from","deposit"]
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+
+  // Extract year from text
+  const yearMatch = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(\d{4})/)
+  const year = yearMatch ? parseInt(yearMatch[1]) : 2025
+
+  // pdfjs-dist joins text with spaces, so we look for date patterns M/D or M/DD
+  const txns: any[] = []
+
+  // Split on date patterns to find transactions
+  // Pattern: M/D or M/DD followed by description and amount
+  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+)/)
+    if (!m) continue
+
+    const mo = m[1].padStart(2, "0")
+    const da = m[2].padStart(2, "0")
+    const rest = m[3]
+
+    // Extract amounts (dollar figures with decimals)
+    const amtMatches = rest.match(/[\d,]+\.\d{2}/g)
+    if (!amtMatches || amtMatches.length === 0) continue
+
+    const amount = parseFloat(amtMatches[0].replace(/,/g, ""))
+    if (amount <= 0 || amount > 999999) continue
+
+    // Get description: everything before the first amount
+    const firstAmtIdx = rest.indexOf(amtMatches[0])
+    let desc = rest.substring(0, firstAmtIdx).trim()
+
+    // Clean up description
+    desc = desc.replace(/Purchase authorized on \d{2}\/\d{2}\s*/i, "")
+      .replace(/Recurring Payment authorized on \d{2}\/\d{2}\s*/i, "")
+      .replace(/Recurring Payment -?\s*/i, "")
+      .replace(/\s+/g, " ").trim()
+
+    if (desc.length < 2 || /^(Date|Ending daily|Beginning balance|Ending balance|Totals|Monthly service)/i.test(desc)) continue
+
+    const dl = desc.toLowerCase()
+    const isCr = creditKW.some(k => dl.includes(k))
+
+    txns.push({
+      date: `${year}-${mo}-${da}`,
+      description: desc.substring(0, 200),
+      amount,
+      type: isCr ? "credit" : "debit",
+      raw_line: seg.substring(0, 200),
+    })
+  }
+
+  // Determine statement month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => { const m = t.date.substring(5, 7); monthCounts[m] = (monthCounts[m] || 0) + 1 })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+
+  console.log(`[wf-pdf] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+  return { transactions: txns, statementMonth: monthNames[parseInt(topMonth) - 1] || "Unknown", statementYear: String(year) }
+}
+
+// ========================================
+// Parse Chase credit card PDF text
+// ========================================
+function parseChasePDFText(text: string) {
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const yearMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+
+  let year = 2025
+  let stmtMonth = "Unknown"
+  if (yearMatch) {
+    year = parseInt(yearMatch[6])
+    if (year < 100) year += 2000
+    stmtMonth = monthNames[parseInt(yearMatch[4]) - 1] || "Unknown"
+  }
+
+  const txns: any[] = []
+  // Chase format from pdfjs: "10/15 MERCHANT NAME 10.86"
+  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
+
+  for (const seg of segments) {
+    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+?)(\s+)([\d,]+\.\d{2})/)
+    if (!m) continue
+
+    const mo = parseInt(m[1]), da = parseInt(m[2])
+    if (mo < 1 || mo > 12 || da < 1 || da > 31) continue
+
+    const desc = m[3].trim()
+    const amount = parseFloat(m[5].replace(/,/g, ""))
+    if (amount <= 0 || amount > 999999) continue
+    if (/^(TOTAL|Year-to-date|Previous|New Balance|Payment Due|Account Number)/i.test(desc)) continue
+
+    const isPayment = /payment/i.test(desc) && !/late/i.test(desc)
+
+    txns.push({
+      date: `${year}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`,
+      description: desc.substring(0, 200),
+      amount,
+      type: isPayment ? "credit" : "debit",
+      raw_line: seg.substring(0, 200),
+    })
+  }
+
+  console.log(`[chase-pdf] Parsed ${txns.length} transactions`)
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
+}
+
+// ========================================
+// Parse Barclays credit card PDF text
+// ========================================
+function parseBarclaysPDFText(text: string) {
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const barclaysMonths: Record<string, string> = {
+    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
+  }
+
+  const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  let year = 2025
+  let stmtMonth = "Unknown"
+  if (periodMatch) {
+    year = parseInt(periodMatch[6])
+    if (year < 100) year += 2000
+    stmtMonth = monthNames[parseInt(periodMatch[4]) - 1] || "Unknown"
+  }
+
+  const txns: any[] = []
+  // Barclays format from pdfjs: "Dec 16 Dec 17 SQ *SWEET CREAMS SANTA BARBARA CA 42 $14.00"
+  const purchaseRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+(\d+)\s+\$?([\d,]+\.\d{2})/g
+  const paymentRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})/g
+
+  // Payments
+  let pm
+  while ((pm = paymentRe.exec(text)) !== null) {
+    const txMon = barclaysMonths[pm[1]] || "01"
+    const txDay = pm[2]
+    const desc = pm[5].trim()
+    const amount = parseFloat(pm[6].replace(/,/g, ""))
+    if (amount > 0 && desc.length > 2) {
+      txns.push({
+        date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+        description: desc.substring(0, 200), amount, type: "credit", raw_line: pm[0],
+      })
+    }
+  }
+
+  // Purchases
+  let pr
+  while ((pr = purchaseRe.exec(text)) !== null) {
+    const txMon = barclaysMonths[pr[1]] || "01"
+    const txDay = pr[2]
+    const desc = pr[5].trim()
+    const amount = parseFloat(pr[7].replace(/,/g, ""))
+    if (amount > 0 && desc.length > 2 && !/^Total/i.test(desc)) {
+      // Skip if already added as a payment
+      const isDupe = txns.some(t => t.date === `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}` && t.amount === amount)
+      if (!isDupe) {
+        txns.push({
+          date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+          description: desc.substring(0, 200), amount, type: "debit", raw_line: pr[0],
+        })
+      }
+    }
+  }
+
+  console.log(`[barclays-pdf] Parsed ${txns.length} transactions`)
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
+}
+
+// ========================================
+// Parse PDF text extracted on the frontend via pdfjs-dist
+// Auto-detects bank type and routes to the right parser
+// ========================================
+function parsePDFText(text: string) {
+  const stmtType = detectStatementType(text)
+  console.log(`[pdf] Auto-detected statement type: ${stmtType}, text length: ${text.length}`)
+
+  let parsed
+  if (stmtType === "chase") {
+    parsed = parseChasePDFText(text)
+  } else if (stmtType === "barclays") {
+    parsed = parseBarclaysPDFText(text)
+  } else {
+    // Default: Wells Fargo
+    parsed = parseWFPDFText(text)
+  }
+
+  // If primary parser found nothing, try all parsers as fallback
+  if (parsed.transactions.length === 0) {
+    console.log("[pdf] Primary parser found 0 txns, trying all parsers as fallback")
+    const wf = parseWFPDFText(text)
+    const chase = parseChasePDFText(text)
+    const barclays = parseBarclaysPDFText(text)
+
+    const best = [wf, chase, barclays].sort((a, b) => b.transactions.length - a.transactions.length)[0]
+    if (best.transactions.length > 0) {
+      console.log(`[pdf] Fallback found ${best.transactions.length} txns`)
+      parsed = best
+    }
+  }
+
+  return parsed
+}
 
 // ========================================
 // Parse CSV text into transactions
@@ -402,20 +529,11 @@ export async function POST(request: NextRequest) {
 
     let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
 
-    // === PDF (base64 from frontend) ===
+    // === PDF (text already extracted on frontend via pdfjs-dist) ===
     if (isPDF) {
-      console.log("[upload] Processing PDF with AI, base64 length:", fileContent.length)
-
-      try {
-        parsed = await extractTransactionsFromPDF(fileContent, fileName)
-        console.log(`[upload] AI extracted ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
-      } catch (e: any) {
-        console.error("[upload] AI PDF extraction failed:", e.message)
-        return NextResponse.json({
-          error: e.message || "Failed to process PDF. Try uploading the CSV version instead.",
-          success: false,
-        }, { status: 500 })
-      }
+      console.log("[upload] Parsing PDF text (extracted on frontend), length:", fileContent.length)
+      parsed = parsePDFText(fileContent)
+      console.log(`[upload] PDF parsed: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
     }
     // === CSV (raw text from frontend) ===
     else {

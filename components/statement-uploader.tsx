@@ -154,31 +154,37 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
 
       try {
-        // Read file content on the FRONTEND
-        // CSVs: read as text. PDFs: read as base64.
+        // Read ALL files on the FRONTEND as text.
+        // CSVs: read directly as text.
+        // PDFs: extract text using pdfjs-dist on the client, then send as text.
         const isPDF = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf"
 
-        const fileContent = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => {
-            if (isPDF) {
-              // Extract base64 from data URL: "data:application/pdf;base64,XXXX"
-              const dataUrl = reader.result as string
-              const base64 = dataUrl.split(",")[1] || ""
-              resolve(base64)
-            } else {
-              resolve(reader.result as string)
-            }
-          }
-          reader.onerror = () => reject(new Error("Failed to read file"))
-          if (isPDF) {
-            reader.readAsDataURL(file)
-          } else {
-            reader.readAsText(file)
-          }
-        })
+        let fileContent: string
 
-        console.log(`[v0] Read file on frontend: ${file.name}, isPDF=${isPDF}, contentLength=${fileContent.length}`)
+        if (isPDF) {
+          // Extract text from PDF on the frontend using pdfjs-dist
+          const pdfjsLib = await import("pdfjs-dist")
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+
+          const arrayBuffer = await file.arrayBuffer()
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+          const pages: string[] = []
+
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p)
+            const textContent = await page.getTextContent()
+            const pageText = textContent.items
+              .map((item: any) => item.str)
+              .join(" ")
+            pages.push(pageText)
+          }
+
+          fileContent = pages.join("\n")
+          console.log(`[v0] Extracted PDF text on frontend: ${file.name}, pages=${pdf.numPages}, textLength=${fileContent.length}`)
+        } else {
+          fileContent = await file.text()
+          console.log(`[v0] Read CSV on frontend: ${file.name}, textLength=${fileContent.length}`)
+        }
 
         const response = await fetch("/api/statements/upload", {
           method: "POST",
