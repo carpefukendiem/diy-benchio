@@ -118,12 +118,13 @@ export interface StatementUpload {
 export interface ParsedTransaction {
   date: string;
   description: string;
+  original_description?: string;
   amount: number;
   type: 'credit' | 'debit';
   balance?: number;
   check_number?: string;
   raw_line: string;
-}
+  }
 
 // Financial report types
 export interface IncomeStatement {

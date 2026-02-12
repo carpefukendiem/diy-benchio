@@ -118,6 +118,30 @@ const BUILT_IN_RULES: Array<{
   
   // === MEALS (ambiguous — default business with lower confidence) ===
   { pattern: 'lighthouse cof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.60 },
+
+  // === CREDIT CARD SPECIFIC ===
+  // Interest and fees (from CC statements)
+  { pattern: 'purchase interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'interest charge-pb purchase', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'interest charge on purchases', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'late fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'late payment fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'payment received', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
+  { pattern: 'payment thank you', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
+
+  // === PERSONAL (from CC statements) ===
+  { pattern: 'in-n-out', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'chipotle', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'starbucks', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'sweet creams', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'cajun kitchen', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.85 },
+  { pattern: 'rusty', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'panino', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'santa barbara chic', match: 'contains', category_id: '00000000-0000-0000-0004-000000000005', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'trader joe', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'best buy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'lemos feed', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'shell oil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.80 },
 ];
 
 export function categorizeByRules(
