@@ -129,25 +129,38 @@ async function extractPDFText(buffer: Buffer): Promise<string> {
 function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" | "unknown" {
   const t = text.toLowerCase()
   if (t.includes("wells fargo") || (t.includes("transaction history") && t.includes("purchase authorized"))) return "wellsfargo"
+  // Chase detection — covers Freedom, Visa, Sapphire, Amazon, Ink, United, etc.
   if (t.includes("chase freedom") || t.includes("chase.com/cardhelp") || t.includes("cardmember service")) return "chase"
+  if (t.includes("chase visa") || t.includes("sapphire") || t.includes("amazon visa")) return "chase"
+  if (t.includes("jpmorgan chase") || t.includes("jpmcb")) return "chase"
+  if (t.includes("chase.com") && (t.includes("payment") || t.includes("purchase"))) return "chase"
+  if (t.includes("opening/closing date") && (t.includes("purchase") || t.includes("payment"))) return "chase"
   if (t.includes("barclays") || t.includes("barclaysus.com") || t.includes("barclays view")) return "barclays"
   // Fallback heuristics
   if (t.includes("account activity") && t.includes("merchant name or transaction")) return "chase"
+  if (t.includes("new balance") && t.includes("minimum payment") && t.includes("closing date")) return "chase"
   if (t.includes("purchase activity for") && t.includes("points")) return "barclays"
   return "unknown"
 }
 
 // ========================================
 // Parse Chase credit card statement text
+// Handles: Freedom, Visa, Sapphire, Amazon, Ink, United, etc.
 // ========================================
 function parseChaseText(text: string) {
   const lines = text.split("\n")
 
-  // Extract statement date for year
+  console.log("[chase] Starting parse, total lines:", lines.length)
+  console.log("[chase] First 500 chars:", text.substring(0, 500).replace(/\n/g, " | "))
+
+  // Extract statement date/year from multiple possible patterns
   const stmtDateMatch = text.match(/Statement Date:\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  const openCloseMatch = text.match(/Opening\/Closing Date\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  const openCloseMatch = text.match(/Opening\/Closing Date\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*[-–]\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  const throughMatch = text.match(/through\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  const closingMatch = text.match(/Closing Date\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  const periodMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*[-–]\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
   
-  let year = 2025
+  let year = new Date().getFullYear()
   let stmtMonth = "Unknown"
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
   
@@ -161,56 +174,168 @@ function parseChaseText(text: string) {
     if (year < 100) year += 2000
     const mn = parseInt(openCloseMatch[4])
     stmtMonth = monthNames[mn - 1] || "Unknown"
+  } else if (closingMatch) {
+    year = parseInt(closingMatch[3])
+    if (year < 100) year += 2000
+    const mn = parseInt(closingMatch[1])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
+  } else if (throughMatch) {
+    year = parseInt(throughMatch[3])
+    if (year < 100) year += 2000
+    const mn = parseInt(throughMatch[1])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
+  } else if (periodMatch) {
+    year = parseInt(periodMatch[6])
+    if (year < 100) year += 2000
+    const mn = parseInt(periodMatch[4])
+    stmtMonth = monthNames[mn - 1] || "Unknown"
   }
 
+  console.log("[chase] Detected year:", year, "month:", stmtMonth)
+
   const txns: any[] = []
+  let inPayments = false
   let inPurchases = false
+  let inReturns = false
   let inFees = false
   let inInterest = false
+  let inAnySection = false
 
-  // Chase format from pdf-parse: "10/15     WINGSTOP 2592 GOLETA CA 10.86"
-  // May have variable whitespace. Amount is always at end of line.
-  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})\s*$/
+  // Multiple transaction regex patterns to handle Chase format variations:
+  // Pattern 1: Single date - "01/15 AMAZON MARKETPLACE 89.99"
+  // Pattern 2: Two dates  - "01/15 01/17 AMAZON MARKETPLACE 89.99"
+  // Pattern 3: With $     - "01/15 AMAZON MARKETPLACE $89.99"
+  // Pattern 4: Negative   - "01/15 AUTOMATIC PAYMENT -89.99"
+  // Pattern 5: Two dates with $ - "01/15 01/17 AMAZON MARKETPLACE $89.99"
+  const txPatterns = [
+    // Two dates: trans date + posting date, amount at end (with optional $ and -)
+    /^(\d{1,2})\/(\d{1,2})\s+\d{1,2}\/\d{1,2}\s+(.+?)\s+-?\$?([\d,]+\.\d{2})\s*$/,
+    // Single date, amount at end (with optional $ and -)
+    /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+-?\$?([\d,]+\.\d{2})\s*$/,
+  ]
 
-  for (const line of lines) {
-    const t = line.trim()
+  for (let li = 0; li < lines.length; li++) {
+    const t = lines[li].trim()
+    if (!t) continue
     
-    // Section detection — Chase uses these exact headers
-    if (t === "PURCHASES" || t === "PURCHASE") { inPurchases = true; inFees = false; inInterest = false; continue }
-    if (t === "FEES CHARGED") { inPurchases = false; inFees = true; inInterest = false; continue }
-    if (t === "INTEREST CHARGED") { inPurchases = false; inFees = false; inInterest = true; continue }
-    // Also catch variations
-    if (/^PURCHASE\s*$/i.test(t) && !/INTEREST/i.test(t)) { inPurchases = true; inFees = false; inInterest = false; continue }
-    if (/^FEES CHARGED\s*$/i.test(t)) { inPurchases = false; inFees = true; inInterest = false; continue }
-    if (/^INTEREST CHARGED\s*$/i.test(t) && !/INTEREST CHARGES$/i.test(t)) { inPurchases = false; inFees = false; inInterest = true; continue }
-    // Stop sections
-    if (/^INTEREST CHARGES$/i.test(t)) { continue } // This is the summary header, not the section
-    if (/^TOTAL /i.test(t) || /^Year-to-date/i.test(t)) { continue }
-    if (/^ACCOUNT ACTIVITY/i.test(t) || /YOUR ACCOUNT MESSAGES/i.test(t)) { continue }
-
-    const m = t.match(txRe)
-    if (m && (inPurchases || inFees || inInterest)) {
-      const mn = parseInt(m[1]), dy = parseInt(m[2])
-      const desc = m[3].trim()
-      const amount = parseFloat(m[4].replace(/,/g, ""))
-      
-      if (amount <= 0) continue
-      // Skip totals lines
-      if (/^TOTAL/i.test(desc)) continue
-
-      let txType = "debit"
-      // Payments/credits are negative in Chase statements
-      if (desc.toLowerCase().includes("payment") && !desc.toLowerCase().includes("late")) txType = "credit"
-
-      txns.push({
-        date: `${year}-${String(mn).padStart(2, "0")}-${String(dy).padStart(2, "0")}`,
-        description: desc,
-        amount,
-        type: txType,
-        raw_line: t,
-        source: inFees ? "fee" : inInterest ? "interest" : "purchase",
-      })
+    // ---- Section detection ----
+    // Payments section
+    if (/^PAYMENTS?\s*(AND OTHER CREDITS)?$/i.test(t) || /^PAYMENT AND OTHER CREDITS$/i.test(t)) {
+      inPayments = true; inPurchases = false; inReturns = false; inFees = false; inInterest = false; inAnySection = true
+      console.log("[chase] Entered PAYMENTS section at line", li)
+      continue
     }
+    // Purchases section
+    if (/^PURCHASES?\s*$/i.test(t) || /^PURCHASE AND ADJUSTMENTS$/i.test(t)) {
+      inPayments = false; inPurchases = true; inReturns = false; inFees = false; inInterest = false; inAnySection = true
+      console.log("[chase] Entered PURCHASES section at line", li)
+      continue
+    }
+    // Returns section
+    if (/^RETURNS?\s*$/i.test(t) || /^RETURNS AND ADJUSTMENTS$/i.test(t) || /^OTHER CREDITS$/i.test(t)) {
+      inPayments = false; inPurchases = false; inReturns = true; inFees = false; inInterest = false; inAnySection = true
+      console.log("[chase] Entered RETURNS section at line", li)
+      continue
+    }
+    // Fees section
+    if (/^FEES CHARGED\s*$/i.test(t) || /^FEES\s*$/i.test(t)) {
+      inPayments = false; inPurchases = false; inReturns = false; inFees = true; inInterest = false; inAnySection = true
+      continue
+    }
+    // Interest section
+    if (/^INTEREST CHARGED\s*$/i.test(t) && !/INTEREST CHARGES$/i.test(t)) {
+      inPayments = false; inPurchases = false; inReturns = false; inFees = false; inInterest = true; inAnySection = true
+      continue
+    }
+    // Skip these (summary headers, not sections)
+    if (/^INTEREST CHARGES$/i.test(t)) continue
+    if (/^ACCOUNT SUMMARY$/i.test(t) || /^ACCOUNT ACTIVITY$/i.test(t)) continue
+    if (/^YOUR ACCOUNT MESSAGES/i.test(t)) continue
+    // Skip totals and header lines
+    if (/^TOTAL /i.test(t) || /^Year-to-date/i.test(t)) continue
+    if (/^Date of\b/i.test(t) || /^Trans(action)?\s+Date/i.test(t)) continue
+
+    const isInSection = inPayments || inPurchases || inReturns || inFees || inInterest
+
+    // Try each pattern
+    let matched = false
+    for (const re of txPatterns) {
+      const m = t.match(re)
+      if (m && isInSection) {
+        const mn = parseInt(m[1]), dy = parseInt(m[2])
+        let desc = m[3].trim()
+        const amount = parseFloat(m[4].replace(/,/g, ""))
+        
+        if (amount <= 0) continue
+        if (/^TOTAL/i.test(desc)) continue
+        // Clean up extra date if present at start of description (from two-date format)
+        desc = desc.replace(/^\d{1,2}\/\d{1,2}\s+/, "")
+
+        // Determine credit vs debit based on section
+        let txType: "credit" | "debit" = "debit"
+        if (inPayments || inReturns) {
+          txType = "credit"
+        } else if (desc.toLowerCase().includes("payment") && !desc.toLowerCase().includes("late payment")) {
+          txType = "credit"
+        }
+
+        txns.push({
+          date: `${year}-${String(mn).padStart(2, "0")}-${String(dy).padStart(2, "0")}`,
+          description: desc,
+          amount,
+          type: txType,
+          raw_line: t,
+          source: inPayments ? "payment" : inReturns ? "return" : inFees ? "fee" : inInterest ? "interest" : "purchase",
+        })
+        matched = true
+        break
+      }
+    }
+  }
+
+  console.log("[chase] Section-based parsing found", txns.length, "transactions")
+
+  // ---- FALLBACK: No sections detected, try parsing any date-leading line ----
+  if (txns.length === 0) {
+    console.log("[chase] Section-based found nothing, trying fallback (all lines)")
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t || t.length < 8) continue
+      // Skip obvious headers/footers
+      if (/^(TOTAL|Date|Trans|Page|Year-to-date|ACCOUNT|Opening|Closing|New Balance|Minimum|Previous|Payment)/i.test(t)) continue
+      if (/cardmember|chase\.com|statement|jpmorgan|p\.o\.\s*box/i.test(t)) continue
+
+      for (const re of txPatterns) {
+        const m = t.match(re)
+        if (m) {
+          const mn = parseInt(m[1]), dy = parseInt(m[2])
+          let desc = m[3].trim()
+          const amount = parseFloat(m[4].replace(/,/g, ""))
+          if (amount <= 0 || amount > 100000) continue
+          if (/^TOTAL/i.test(desc)) continue
+          desc = desc.replace(/^\d{1,2}\/\d{1,2}\s+/, "")
+          if (desc.length < 2) continue
+
+          let txType: "credit" | "debit" = "debit"
+          const descLower = desc.toLowerCase()
+          if (descLower.includes("payment") && !descLower.includes("late")) txType = "credit"
+          if (descLower.includes("refund") || descLower.includes("credit") || descLower.includes("return")) txType = "credit"
+          // Check if original line had a negative sign before the amount
+          if (/\s-\$?[\d,]+\.\d{2}\s*$/.test(t)) txType = "credit"
+
+          txns.push({
+            date: `${year}-${String(mn).padStart(2, "0")}-${String(dy).padStart(2, "0")}`,
+            description: desc,
+            amount,
+            type: txType,
+            raw_line: t,
+            source: "unknown",
+          })
+          break
+        }
+      }
+    }
+    console.log("[chase] Fallback found", txns.length, "transactions")
   }
 
   return {
@@ -512,6 +637,8 @@ export async function POST(request: NextRequest) {
       }
 
       console.log("[upload] PDF text length:", pdfText.length)
+      // Log a snippet of the PDF text for debugging statement detection
+      console.log("[upload] PDF text preview:", pdfText.substring(0, 800).replace(/\n/g, " | "))
 
       if (pdfText.length < 100) {
         return NextResponse.json({
@@ -562,7 +689,7 @@ export async function POST(request: NextRequest) {
 
     if (parsed.transactions.length === 0) {
       return NextResponse.json({
-        error: `No transactions found in ${file.name}. Supports Wells Fargo, Chase Freedom, and Barclays View statements.`,
+        error: `No transactions found in ${file.name}. Supports Wells Fargo, Chase (Visa/Freedom/Sapphire/Amazon/Ink), and Barclays View statements.`,
         success: false,
       }, { status: 400 })
     }
