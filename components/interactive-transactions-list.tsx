@@ -118,8 +118,10 @@ export function InteractiveTransactionsList({
       if (field === "category") {
         const revenueCategories = [
           "Sales Revenue",
+          "Freelance Income",
           "Interest Income",
           "Other Income",
+          "Refunds Given",
           "Member Contribution - Ruben Ruiz",
         ]
         updates.isIncome = revenueCategories.includes(value)
@@ -142,7 +144,7 @@ export function InteractiveTransactionsList({
       id,
       updates: {
         category,
-        isIncome: ["Sales Revenue", "Interest Income", "Other Income", "Member Contribution - Ruben Ruiz"].includes(
+        isIncome: ["Sales Revenue", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"].includes(
           category,
         ),
       },
@@ -298,14 +300,25 @@ export function InteractiveTransactionsList({
     }
   }
 
+  const uncategorizedCount = useMemo(() => {
+    return transactions.filter(t => !t.category || t.category === "Uncategorized Expense" || t.category === "").length
+  }, [transactions])
+
   return (
     <Card>
       <CardHeader>
         <div className="flex justify-between items-center">
           <div>
-            <CardTitle>Live Transaction Editor</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Live Transaction Editor
+              {uncategorizedCount > 0 && (
+                <Badge variant="destructive" className="text-xs cursor-pointer" onClick={() => setCategoryFilter("uncategorized")}>
+                  {uncategorizedCount} uncategorized
+                </Badge>
+              )}
+            </CardTitle>
             <CardDescription>
-              Click any cell to edit • Select multiple for bulk actions ({filteredTransactions.length} transactions)
+              Click any cell to edit {"\u2022"} Select multiple for bulk actions ({filteredTransactions.length} transactions)
             </CardDescription>
           </div>
           <div className="flex gap-2">

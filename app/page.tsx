@@ -20,6 +20,7 @@ import {
   Building2,
   Plus,
   Loader2,
+  RefreshCw,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -228,17 +229,17 @@ export default function CaliforniaBusinessAccounting() {
   }, [toast])
 
   // Re-categorize all transactions using latest rules (client-side)
-  const handleRecategorize = useCallback(() => {
+  const handleRecategorize = useCallback((forceAll = false) => {
     if (!currentBusiness || currentBusiness.transactions.length === 0) {
       toast({ title: "No transactions", description: "Upload statements first" })
       return
     }
 
-    // Use the single source of truth rules engine (300+ rules + smart fallback)
+    // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
     const newTransactions = currentBusiness.transactions.map(t => {
-      // Skip user-categorized transactions (don't override manual edits)
-      if (t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
+      // Skip user-categorized transactions unless forceAll (don't override manual edits)
+      if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
         // But DO check if Upwork income is miscategorized
         const dl = t.description.toLowerCase()
         if (dl.includes("upwork") && !t.isIncome) {
@@ -338,7 +339,7 @@ export default function CaliforniaBusinessAccounting() {
 
   // Memoize expensive calculations
   const stats = useMemo(() => {
-    if (!currentBusiness) return { totalBalance: 0, totalRevenue: 0, totalExpenses: 0, taxSavings: 0, estimatedTaxLiability: 0 }
+    if (!currentBusiness) return { totalBalance: 0, totalRevenue: 0, totalExpenses: 0, totalDeductible: 0, taxSavings: 0, estimatedTaxLiability: 0 }
 
     const totalBalance = currentBusiness.uploadedStatements.reduce((sum, statement) => {
       return sum + statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
@@ -348,14 +349,29 @@ export default function CaliforniaBusinessAccounting() {
       .filter((t) => t.isIncome)
       .reduce((sum, t) => sum + t.amount, 0)
 
-    const totalExpenses = currentBusiness.transactions
-      .filter((t) => !t.isIncome)
-      .reduce((sum, t) => sum + t.amount, 0)
+    // Only count business-deductible expenses (exclude personal, transfers, owner draws, uncategorized)
+    const personalKeywords = ["personal", "crypto"]
+    const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
+    const businessExpenses = currentBusiness.transactions.filter((t) => {
+      if (t.isIncome) return false
+      const cl = (t.category || "").toLowerCase()
+      if (!cl || cl.includes("uncategorized")) return false
+      if (personalKeywords.some(k => cl.includes(k))) return false
+      if (transferKeywords.some(k => cl.includes(k))) return false
+      return true
+    })
+    const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
+    // Apply 50% meals deduction rule
+    const totalDeductible = businessExpenses.reduce((sum, t) => {
+      const cl = (t.category || "").toLowerCase()
+      if (cl.includes("meals")) return sum + t.amount * 0.5
+      return sum + t.amount
+    }, 0)
 
-    const taxSavings = totalExpenses * 0.35
-    const estimatedTaxLiability = Math.max(0, (totalRevenue - totalExpenses) * 0.35)
+    const taxSavings = totalDeductible * 0.35
+    const estimatedTaxLiability = Math.max(0, (totalRevenue - totalDeductible) * 0.35)
 
-    return { totalBalance, totalRevenue, totalExpenses, taxSavings, estimatedTaxLiability }
+    return { totalBalance, totalRevenue, totalExpenses, totalDeductible, taxSavings, estimatedTaxLiability }
   }, [currentBusiness])
 
   const businessSelectorData = useMemo(() =>
@@ -456,8 +472,11 @@ export default function CaliforniaBusinessAccounting() {
                 )}
               </div>
               <div className="flex gap-2 items-center">
-                <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={handleRecategorize} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(false)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
                   <Sparkles className="h-3.5 w-3.5" /> Re-categorize
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0} title="Re-run all rules on every transaction, overriding previous categorizations">
+                  <RefreshCw className="h-3.5 w-3.5" /> Force All
                 </Button>
                 <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
@@ -512,9 +531,9 @@ export default function CaliforniaBusinessAccounting() {
                 <TrendingDown className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">${stats.totalExpenses.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-blue-600">${stats.totalDeductible.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
-                  {currentBusiness.transactions.filter((t) => !t.isIncome).length} transactions
+                  After 50% meals adjustment
                 </p>
               </CardContent>
             </Card>
@@ -546,7 +565,14 @@ export default function CaliforniaBusinessAccounting() {
             <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="statements">Statements</TabsTrigger>
               <TabsTrigger value="receipts">Receipts</TabsTrigger>
-              <TabsTrigger value="transactions">Transactions</TabsTrigger>
+              <TabsTrigger value="transactions" className="relative">
+                Transactions
+                {currentBusiness.transactions.filter(t => !t.category || t.category === "Uncategorized Expense" || t.category === "").length > 0 && (
+                  <Badge variant="destructive" className="ml-1 text-[10px] h-4 px-1">
+                    {currentBusiness.transactions.filter(t => !t.category || t.category === "Uncategorized Expense" || t.category === "").length}
+                  </Badge>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="reports">Tax Reports</TabsTrigger>
               <TabsTrigger value="deductions">Deductions</TabsTrigger>
             </TabsList>
@@ -630,6 +656,60 @@ export default function CaliforniaBusinessAccounting() {
 }
 
 // Extracted as separate component to avoid re-renders from parent
+// Human-readable labels for deduction IDs
+const DEDUCTION_LABELS: Record<string, string> = {
+  advertising: "Advertising & Marketing",
+  marketing: "Marketing & Advertising",
+  vehicle: "Vehicle & Mileage",
+  "merchant-fees": "Merchant & Platform Fees",
+  contractors: "Contract Labor (1099s)",
+  equipment: "Equipment & Depreciation",
+  insurance: "Business Insurance",
+  "health-insurance": "Self-Employed Health Insurance",
+  "bank-fees": "Interest & Bank Fees",
+  professional: "Professional Services",
+  office: "Office Supplies & Expenses",
+  travel: "Business Travel",
+  meals: "Business Meals (50%)",
+  utilities: "Utilities",
+  "phone-internet": "Phone & Internet",
+  software: "Software & SaaS",
+  "software-booking": "Booking & Payment Software",
+  education: "Education & Training",
+  "home-office": "Home Office Deduction",
+  "california-fees": "California LLC / Franchise Tax",
+  rent: "Rent Expense",
+  "sep-ira": "SEP-IRA / Solo 401(k)",
+  waste: "Waste & Disposal",
+}
+
+// Map wizard deduction IDs to actual transaction category names
+const DEDUCTION_CATEGORY_MAP: Record<string, string[]> = {
+  advertising: ["Advertising & Marketing", "Social Media & Online Presence", "Soccer Team Sponsorship"],
+  marketing: ["Advertising & Marketing", "Social Media & Online Presence", "Soccer Team Sponsorship"],
+  vehicle: ["Gas & Auto Expense", "Parking Expense"],
+  "merchant-fees": ["Merchant Processing Fees", "Merchant Fees Expense"],
+  contractors: ["Contract Labor"],
+  equipment: ["Equipment & Depreciation"],
+  insurance: ["Insurance Expense - Business"],
+  "health-insurance": ["Health Insurance"],
+  "bank-fees": ["Bank & ATM Fee Expense"],
+  professional: ["Professional Service Expense", "Tax Software & Services"],
+  office: ["Office Supplies", "Office Supply Expense", "Office Kitchen Supplies"],
+  travel: ["Travel Expense"],
+  meals: ["Business Meals Expense"],
+  utilities: ["Utilities Expense"],
+  "phone-internet": ["Phone & Internet Expense"],
+  software: ["Software & Web Hosting Expense"],
+  "software-booking": ["Software & Web Hosting Expense"],
+  education: ["Education & Training"],
+  "home-office": ["Home Office Expense"],
+  "california-fees": ["California LLC Fee"],
+  rent: ["Rent Expense"],
+  "sep-ira": ["SEP-IRA Contribution"],
+  waste: ["Waste & Disposal"],
+}
+
 function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessData; stats: any }) {
   return (
     <div className="space-y-6">
@@ -645,26 +725,34 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
           {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {currentBusiness.profile.deductions.map((deduction) => {
+                const mappedCategories = DEDUCTION_CATEGORY_MAP[deduction] || []
                 const relatedTransactions = currentBusiness.transactions.filter(
                   (t) =>
                     !t.isIncome &&
-                    (t.category.toLowerCase().includes(deduction.toLowerCase()) ||
-                      t.description.toLowerCase().includes(deduction.toLowerCase()) ||
-                      deduction.toLowerCase().includes(t.category.toLowerCase())),
+                    (mappedCategories.some(mc => t.category === mc) ||
+                      t.category.toLowerCase().includes(deduction.toLowerCase()) ||
+                      t.description.toLowerCase().includes(deduction.toLowerCase())),
                 )
                 const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
-                const savings = Math.round(totalAmount * 0.35)
+                const deductPct = deduction === "meals" ? 0.5 : 1
+                const deductibleAmount = totalAmount * deductPct
+                const savings = Math.round(deductibleAmount * 0.35)
 
                 return (
                   <Card key={deduction} className="hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
-                      <h4 className="font-semibold text-sm mb-2 line-clamp-2">{deduction}</h4>
+                      <h4 className="font-semibold text-sm mb-2 line-clamp-2">{DEDUCTION_LABELS[deduction] || deduction}</h4>
                       <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
+                      {deductPct < 1 && (
+                        <div className="text-xs text-muted-foreground mb-1">
+                          Deductible ({deductPct * 100}%): ${deductibleAmount.toFixed(2)}
+                        </div>
+                      )}
                       <div className="text-sm text-green-600 font-medium mb-2">
                         Tax Savings: ${savings.toFixed(2)}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {relatedTransactions.length} transactions • 2025 YTD
+                        {relatedTransactions.length} transactions {"\u2022"} 2025 YTD
                       </p>
                     </CardContent>
                   </Card>
