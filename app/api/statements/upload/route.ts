@@ -1,5 +1,4 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { Buffer } from "buffer"
 import { generateText } from "ai"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
 
@@ -60,14 +59,12 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
 // AI-powered PDF transaction extraction
 // Uses GPT-4o which can natively read PDFs
 // ========================================
-async function extractTransactionsFromPDF(buffer: Buffer, fileName: string): Promise<{
+async function extractTransactionsFromPDF(base64: string, fileName: string): Promise<{
   transactions: any[];
   statementMonth: string;
   statementYear: string;
 }> {
-  const base64 = buffer.toString("base64")
-
-  console.log("[pdf-ai] Sending PDF to GPT-4o for extraction, size:", buffer.length)
+  console.log("[pdf-ai] Sending PDF to GPT-4o for extraction, base64 length:", base64.length)
 
   const result = await generateText({
     model: "openai/gpt-4o",
@@ -393,28 +390,24 @@ function toUIFormat(categorized: any[]) {
 // ========================================
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
-    const file = formData.get("file") as File
-    const accountName = formData.get("accountName") as string
-    const accountType = formData.get("accountType") as string
+    // Frontend sends JSON with file content already read
+    const body = await request.json()
+    const { fileName, fileContent, isPDF, accountName, accountType } = body
 
-    if (!file || !accountName || !accountType) {
+    if (!fileName || !fileContent || !accountName || !accountType) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    console.log("[upload] Processing:", file.name, "Size:", file.size, "Account:", accountName)
+    console.log("[upload] Processing:", fileName, "isPDF:", isPDF, "contentLength:", fileContent.length, "Account:", accountName)
 
     let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
 
-    // === PDF ===
-    if (file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf") {
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-
-      console.log("[upload] Processing PDF with AI, buffer size:", buffer.length)
+    // === PDF (base64 from frontend) ===
+    if (isPDF) {
+      console.log("[upload] Processing PDF with AI, base64 length:", fileContent.length)
 
       try {
-        parsed = await extractTransactionsFromPDF(buffer, file.name)
+        parsed = await extractTransactionsFromPDF(fileContent, fileName)
         console.log(`[upload] AI extracted ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
       } catch (e: any) {
         console.error("[upload] AI PDF extraction failed:", e.message)
@@ -424,20 +417,15 @@ export async function POST(request: NextRequest) {
         }, { status: 500 })
       }
     }
-    // === CSV ===
-    else if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
-      const csvText = await file.text()
-      parsed = parseCSVText(csvText)
-      console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
-    }
-    // === UNSUPPORTED ===
+    // === CSV (raw text from frontend) ===
     else {
-      return NextResponse.json({ error: "Unsupported file type. Use PDF or CSV." }, { status: 400 })
+      parsed = parseCSVText(fileContent)
+      console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
     }
 
     if (parsed.transactions.length === 0) {
       return NextResponse.json({
-        error: `No transactions found in ${file.name}. Supports Wells Fargo, Chase Freedom, and Barclays View statements.`,
+        error: `No transactions found in ${fileName}. Supports Wells Fargo, Chase, and Barclays statements.`,
         success: false,
       }, { status: 400 })
     }
@@ -458,7 +446,7 @@ export async function POST(request: NextRequest) {
       transactions,
       month: parsed.statementMonth,
       year: parsed.statementYear,
-      message: `Processed ${transactions.length} transactions from ${file.name}`,
+      message: `Processed ${transactions.length} transactions from ${fileName}`,
     })
 
   } catch (error: any) {

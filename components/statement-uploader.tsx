@@ -154,13 +154,43 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
 
       try {
-        const formData = new FormData()
-        formData.append("file", file)
-        formData.append("accountName", accountName)
-        formData.append("accountType", accountType)
+        // Read file content on the FRONTEND
+        // CSVs: read as text. PDFs: read as base64.
+        const isPDF = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf"
 
-        console.log(`[v0] Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`)
-        const response = await fetch("/api/statements/upload", { method: "POST", body: formData })
+        const fileContent = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            if (isPDF) {
+              // Extract base64 from data URL: "data:application/pdf;base64,XXXX"
+              const dataUrl = reader.result as string
+              const base64 = dataUrl.split(",")[1] || ""
+              resolve(base64)
+            } else {
+              resolve(reader.result as string)
+            }
+          }
+          reader.onerror = () => reject(new Error("Failed to read file"))
+          if (isPDF) {
+            reader.readAsDataURL(file)
+          } else {
+            reader.readAsText(file)
+          }
+        })
+
+        console.log(`[v0] Read file on frontend: ${file.name}, isPDF=${isPDF}, contentLength=${fileContent.length}`)
+
+        const response = await fetch("/api/statements/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileContent,
+            isPDF,
+            accountName,
+            accountType,
+          }),
+        })
         console.log(`[v0] Response for ${file.name}: status=${response.status}`)
 
         if (response.ok) {
