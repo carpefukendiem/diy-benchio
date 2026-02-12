@@ -1,13 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { Buffer } from "buffer"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
-
-// CRITICAL: Allow large file uploads (bank PDFs can be 5MB+)
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-}
 
 // Route segment config for Next.js App Router
 export const maxDuration = 30
@@ -63,399 +55,441 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
 }
 
 // ========================================
-// Extract text from PDF buffer
-// ========================================
-async function extractPDFText(buffer: Buffer): Promise<string> {
-  // pdf-parse has a known issue: on import, it tries to load a test PDF
-  // which crashes on Vercel. We handle this with multiple fallback strategies.
-  try {
-    // Strategy 1: Dynamic import (works on Vercel when serverExternalPackages includes pdf-parse)
-    const pdfParse = (await import("pdf-parse")).default
-    const data = await pdfParse(buffer, {
-      // Disable the test file that crashes Vercel
-      max: 0, // no page limit
-    })
-    if (data && data.text && data.text.length > 50) {
-      return data.text
-    }
-  } catch (e1: any) {
-    console.log("[pdf] Dynamic import failed:", e1.message)
-    try {
-      // Strategy 2: require (works in some Node.js environments)
-      const pdfParse = require("pdf-parse")
-      const data = await pdfParse(buffer)
-      if (data && data.text && data.text.length > 50) {
-        return data.text
-      }
-    } catch (e2: any) {
-      console.log("[pdf] Require failed:", e2.message)
-    }
-  }
-
-  // Strategy 3: Manual extraction for simple text PDFs
-  // Many bank PDFs have text directly in the buffer
-  try {
-    const textContent = buffer.toString("utf-8")
-    // Look for common bank statement patterns in raw text
-    if (textContent.includes("wells fargo") || textContent.includes("Wells Fargo") ||
-        textContent.includes("chase") || textContent.includes("barclays")) {
-      // Extract readable text between stream/endstream markers
-      const streams = textContent.match(/stream\r?\n([\s\S]*?)endstream/g)
-      if (streams) {
-        const text = streams.map(s => {
-          const content = s.replace(/^stream\r?\n/, "").replace(/endstream$/, "")
-          // Filter to only printable ASCII
-          return content.replace(/[^\x20-\x7E\n\r]/g, " ").replace(/\s+/g, " ").trim()
-        }).filter(s => s.length > 20).join("\n")
-        if (text.length > 100) return text
-      }
-    }
-  } catch (e3: any) {
-    console.log("[pdf] Manual extraction failed:", e3.message)
-  }
-
-  throw new Error(
-    "Could not extract text from this PDF. This usually means pdf-parse failed to initialize. " +
-    "Try these alternatives:\n" +
-    "1. Download your statement as CSV instead of PDF from your bank's website\n" +
-    "2. Try a different browser to download the PDF\n" +
-    "3. Make sure the PDF is a digital statement (not a scanned image)"
-  )
-}
-
-// ========================================
-// Detect statement type from PDF text
+// Detect statement type from extracted PDF text
 // ========================================
 function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" | "unknown" {
   const t = text.toLowerCase()
   if (t.includes("wells fargo") || (t.includes("transaction history") && t.includes("purchase authorized"))) return "wellsfargo"
-  if (t.includes("chase freedom") || t.includes("chase.com/cardhelp") || t.includes("cardmember service")) return "chase"
+  if (t.includes("chase freedom") || t.includes("chase.com") || t.includes("cardmember service") || t.includes("account activity")) return "chase"
   if (t.includes("barclays") || t.includes("barclaysus.com") || t.includes("barclays view")) return "barclays"
-  // Fallback heuristics
-  if (t.includes("account activity") && t.includes("merchant name or transaction")) return "chase"
-  if (t.includes("purchase activity for") && t.includes("points")) return "barclays"
   return "unknown"
 }
 
 // ========================================
-// Parse Chase credit card statement text
+// Parse Wells Fargo PDF text (extracted by pdfjs-dist on frontend)
 // ========================================
-function parseChaseText(text: string) {
-  const lines = text.split("\n")
+function parseWFPDFText(text: string) {
+  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","purchase return","refund","overdraft protection from","instant pmt from","deposit"]
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
-  // Extract statement date for year
-  const stmtDateMatch = text.match(/Statement Date:\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  const openCloseMatch = text.match(/Opening\/Closing Date\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  
+  // Extract year from text
+  const yearMatch = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(\d{4})/)
+  const year = yearMatch ? parseInt(yearMatch[1]) : 2025
+
+  // pdfjs-dist joins text with spaces, so we look for date patterns M/D or M/DD
+  const txns: any[] = []
+
+  // Split on date patterns to find transactions
+  // Pattern: M/D or M/DD followed by description and amount
+  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+)/)
+    if (!m) continue
+
+    const mo = m[1].padStart(2, "0")
+    const da = m[2].padStart(2, "0")
+    const rest = m[3]
+
+    // Extract amounts (dollar figures with decimals)
+    const amtMatches = rest.match(/[\d,]+\.\d{2}/g)
+    if (!amtMatches || amtMatches.length === 0) continue
+
+    const amount = parseFloat(amtMatches[0].replace(/,/g, ""))
+    if (amount <= 0 || amount > 999999) continue
+
+    // Get description: everything before the first amount
+    const firstAmtIdx = rest.indexOf(amtMatches[0])
+    let desc = rest.substring(0, firstAmtIdx).trim()
+
+    // Clean up description
+    desc = desc.replace(/Purchase authorized on \d{2}\/\d{2}\s*/i, "")
+      .replace(/Recurring Payment authorized on \d{2}\/\d{2}\s*/i, "")
+      .replace(/Recurring Payment -?\s*/i, "")
+      .replace(/\s+/g, " ").trim()
+
+    if (desc.length < 2 || /^(Date|Ending daily|Beginning balance|Ending balance|Totals|Monthly service)/i.test(desc)) continue
+
+    const dl = desc.toLowerCase()
+    const isCr = creditKW.some(k => dl.includes(k))
+
+    txns.push({
+      date: `${year}-${mo}-${da}`,
+      description: desc.substring(0, 200),
+      amount,
+      type: isCr ? "credit" : "debit",
+      raw_line: seg.substring(0, 200),
+    })
+  }
+
+  // Determine statement month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => { const m = t.date.substring(5, 7); monthCounts[m] = (monthCounts[m] || 0) + 1 })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+
+  console.log(`[wf-pdf] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+  return { transactions: txns, statementMonth: monthNames[parseInt(topMonth) - 1] || "Unknown", statementYear: String(year) }
+}
+
+// ========================================
+// Parse Chase credit card PDF text
+// ========================================
+function parseChasePDFText(text: string) {
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const yearMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+
   let year = 2025
   let stmtMonth = "Unknown"
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-  
-  if (stmtDateMatch) {
-    year = parseInt(stmtDateMatch[3])
+  if (yearMatch) {
+    year = parseInt(yearMatch[6])
     if (year < 100) year += 2000
-    const mn = parseInt(stmtDateMatch[1])
-    stmtMonth = monthNames[mn - 1] || "Unknown"
-  } else if (openCloseMatch) {
-    year = parseInt(openCloseMatch[6])
-    if (year < 100) year += 2000
-    const mn = parseInt(openCloseMatch[4])
-    stmtMonth = monthNames[mn - 1] || "Unknown"
+    stmtMonth = monthNames[parseInt(yearMatch[4]) - 1] || "Unknown"
   }
 
   const txns: any[] = []
-  let inPurchases = false
-  let inFees = false
-  let inInterest = false
+  // Chase format from pdfjs: "10/15 MERCHANT NAME 10.86"
+  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
 
-  // Chase format from pdf-parse: "10/15     WINGSTOP 2592 GOLETA CA 10.86"
-  // May have variable whitespace. Amount is always at end of line.
-  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})\s*$/
+  for (const seg of segments) {
+    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+?)(\s+)([\d,]+\.\d{2})/)
+    if (!m) continue
 
-  for (const line of lines) {
-    const t = line.trim()
-    
-    // Section detection — Chase uses these exact headers
-    if (t === "PURCHASES" || t === "PURCHASE") { inPurchases = true; inFees = false; inInterest = false; continue }
-    if (t === "FEES CHARGED") { inPurchases = false; inFees = true; inInterest = false; continue }
-    if (t === "INTEREST CHARGED") { inPurchases = false; inFees = false; inInterest = true; continue }
-    // Also catch variations
-    if (/^PURCHASE\s*$/i.test(t) && !/INTEREST/i.test(t)) { inPurchases = true; inFees = false; inInterest = false; continue }
-    if (/^FEES CHARGED\s*$/i.test(t)) { inPurchases = false; inFees = true; inInterest = false; continue }
-    if (/^INTEREST CHARGED\s*$/i.test(t) && !/INTEREST CHARGES$/i.test(t)) { inPurchases = false; inFees = false; inInterest = true; continue }
-    // Stop sections
-    if (/^INTEREST CHARGES$/i.test(t)) { continue } // This is the summary header, not the section
-    if (/^TOTAL /i.test(t) || /^Year-to-date/i.test(t)) { continue }
-    if (/^ACCOUNT ACTIVITY/i.test(t) || /YOUR ACCOUNT MESSAGES/i.test(t)) { continue }
+    const mo = parseInt(m[1]), da = parseInt(m[2])
+    if (mo < 1 || mo > 12 || da < 1 || da > 31) continue
 
-    const m = t.match(txRe)
-    if (m && (inPurchases || inFees || inInterest)) {
-      const mn = parseInt(m[1]), dy = parseInt(m[2])
-      const desc = m[3].trim()
-      const amount = parseFloat(m[4].replace(/,/g, ""))
-      
-      if (amount <= 0) continue
-      // Skip totals lines
-      if (/^TOTAL/i.test(desc)) continue
+    const desc = m[3].trim()
+    const amount = parseFloat(m[5].replace(/,/g, ""))
+    if (amount <= 0 || amount > 999999) continue
+    if (/^(TOTAL|Year-to-date|Previous|New Balance|Payment Due|Account Number)/i.test(desc)) continue
 
-      let txType = "debit"
-      // Payments/credits are negative in Chase statements
-      if (desc.toLowerCase().includes("payment") && !desc.toLowerCase().includes("late")) txType = "credit"
+    const isPayment = /payment/i.test(desc) && !/late/i.test(desc)
 
+    txns.push({
+      date: `${year}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`,
+      description: desc.substring(0, 200),
+      amount,
+      type: isPayment ? "credit" : "debit",
+      raw_line: seg.substring(0, 200),
+    })
+  }
+
+  console.log(`[chase-pdf] Parsed ${txns.length} transactions`)
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
+}
+
+// ========================================
+// Parse Barclays credit card PDF text
+// ========================================
+function parseBarclaysPDFText(text: string) {
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const barclaysMonths: Record<string, string> = {
+    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
+  }
+
+  const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  let year = 2025
+  let stmtMonth = "Unknown"
+  if (periodMatch) {
+    year = parseInt(periodMatch[6])
+    if (year < 100) year += 2000
+    stmtMonth = monthNames[parseInt(periodMatch[4]) - 1] || "Unknown"
+  }
+
+  const txns: any[] = []
+  // Barclays format from pdfjs: "Dec 16 Dec 17 SQ *SWEET CREAMS SANTA BARBARA CA 42 $14.00"
+  const purchaseRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+(\d+)\s+\$?([\d,]+\.\d{2})/g
+  const paymentRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})/g
+
+  // Payments
+  let pm
+  while ((pm = paymentRe.exec(text)) !== null) {
+    const txMon = barclaysMonths[pm[1]] || "01"
+    const txDay = pm[2]
+    const desc = pm[5].trim()
+    const amount = parseFloat(pm[6].replace(/,/g, ""))
+    if (amount > 0 && desc.length > 2) {
       txns.push({
-        date: `${year}-${String(mn).padStart(2, "0")}-${String(dy).padStart(2, "0")}`,
-        description: desc,
-        amount,
-        type: txType,
-        raw_line: t,
-        source: inFees ? "fee" : inInterest ? "interest" : "purchase",
+        date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+        description: desc.substring(0, 200), amount, type: "credit", raw_line: pm[0],
       })
     }
   }
 
-  return {
-    transactions: txns.filter(tx => tx.amount > 0),
-    statementMonth: stmtMonth,
-    statementYear: String(year),
+  // Purchases
+  let pr
+  while ((pr = purchaseRe.exec(text)) !== null) {
+    const txMon = barclaysMonths[pr[1]] || "01"
+    const txDay = pr[2]
+    const desc = pr[5].trim()
+    const amount = parseFloat(pr[7].replace(/,/g, ""))
+    if (amount > 0 && desc.length > 2 && !/^Total/i.test(desc)) {
+      // Skip if already added as a payment
+      const isDupe = txns.some(t => t.date === `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}` && t.amount === amount)
+      if (!isDupe) {
+        txns.push({
+          date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+          description: desc.substring(0, 200), amount, type: "debit", raw_line: pr[0],
+        })
+      }
+    }
   }
+
+  console.log(`[barclays-pdf] Parsed ${txns.length} transactions`)
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
 }
 
 // ========================================
-// Parse Barclays credit card statement text
+// Parse PDF text extracted on the frontend via pdfjs-dist
+// Auto-detects bank type and routes to the right parser
 // ========================================
-function parseBarclaysText(text: string) {
-  const lines = text.split("\n")
+function parsePDFText(text: string) {
+  const stmtType = detectStatementType(text)
+  console.log(`[pdf] Auto-detected statement type: ${stmtType}, text length: ${text.length}`)
 
-  // Extract statement period
-  const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  let year = 2025
-  let stmtMonth = "Unknown"
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-
-  if (periodMatch) {
-    year = parseInt(periodMatch[6])
-    if (year < 100) year += 2000
-    const mn = parseInt(periodMatch[4])
-    stmtMonth = monthNames[mn - 1] || "Unknown"
+  let parsed
+  if (stmtType === "chase") {
+    parsed = parseChasePDFText(text)
+  } else if (stmtType === "barclays") {
+    parsed = parseBarclaysPDFText(text)
+  } else {
+    // Default: Wells Fargo
+    parsed = parseWFPDFText(text)
   }
 
-  const txns: any[] = []
-  let inPayments = false
-  let inPurchases = false
-  let inFees = false
-  let inInterest = false
+  // If primary parser found nothing, try all parsers as fallback
+  if (parsed.transactions.length === 0) {
+    console.log("[pdf] Primary parser found 0 txns, trying all parsers as fallback")
+    const wf = parseWFPDFText(text)
+    const chase = parseChasePDFText(text)
+    const barclays = parseBarclaysPDFText(text)
 
-  // Barclays months
-  const barclaysMonths: Record<string, string> = {
-    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",
-    Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
-  }
-
-  // Barclays format: Mon DD Mon DD DESCRIPTION POINTS $AMOUNT
-  // e.g.: Dec 16 Dec 17 SQ *SWEET CREAMS SANTA BARBARA CA 42 $14.00
-  const purchaseRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+(\d+)\s+\$?([\d,]+\.\d{2})\s*$/
-  // Payment format: Mon DD Mon DD Payment Received WELLS FARGO B N/A -$175.00
-  const paymentRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})\s*$/
-  // Fee/interest format: Mon DD Mon DD DESCRIPTION $AMOUNT
-  const feeRe = /^(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})\s*$/
-
-  for (const line of lines) {
-    const t = line.trim()
-
-    // Section detection
-    if (/^Payments$/i.test(t)) { inPayments = true; inPurchases = false; inFees = false; inInterest = false; continue }
-    if (/^Purchase Activity/i.test(t)) { inPayments = false; inPurchases = true; inFees = false; inInterest = false; continue }
-    if (/^Fees Charged$/i.test(t)) { inPayments = false; inPurchases = false; inFees = true; inInterest = false; continue }
-    if (/^Interest Charged$/i.test(t)) { inPayments = false; inPurchases = false; inFees = false; inInterest = true; continue }
-    if (/^Total /i.test(t) || /^No fees charged/i.test(t) || /^No Transaction Activity/i.test(t)) continue
-    if (/Transaction Date/i.test(t) || /Posting Date/i.test(t)) continue
-
-    // Try purchase pattern (has Points column)
-    if (inPurchases) {
-      const pm = t.match(purchaseRe)
-      if (pm) {
-        const txMon = barclaysMonths[pm[1]] || "01"
-        const txDay = pm[2]
-        const desc = pm[5].trim()
-        const amount = parseFloat(pm[7].replace(/,/g, ""))
-        if (amount > 0) {
-          txns.push({
-            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
-            description: desc, amount, type: "debit", raw_line: t, source: "purchase",
-          })
-        }
-        continue
-      }
-    }
-
-    // Try payment pattern
-    if (inPayments) {
-      const paym = t.match(paymentRe)
-      if (paym) {
-        const txMon = barclaysMonths[paym[1]] || "01"
-        const txDay = paym[2]
-        const desc = paym[5].trim()
-        const amount = parseFloat(paym[6].replace(/,/g, ""))
-        if (amount > 0) {
-          txns.push({
-            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
-            description: desc, amount, type: "credit", raw_line: t, source: "payment",
-          })
-        }
-        continue
-      }
-    }
-
-    // Try fee/interest pattern
-    if (inFees || inInterest) {
-      const fm = t.match(feeRe)
-      if (fm) {
-        const txMon = barclaysMonths[fm[1]] || "01"
-        const txDay = fm[2]
-        const desc = fm[5].trim()
-        const amount = parseFloat(fm[6].replace(/,/g, ""))
-        if (amount > 0 && !/^Total/i.test(desc)) {
-          txns.push({
-            date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
-            description: desc, amount, type: "debit", raw_line: t,
-            source: inFees ? "fee" : "interest",
-          })
-        }
-      }
+    const best = [wf, chase, barclays].sort((a, b) => b.transactions.length - a.transactions.length)[0]
+    if (best.transactions.length > 0) {
+      console.log(`[pdf] Fallback found ${best.transactions.length} txns`)
+      parsed = best
     }
   }
 
-  return {
-    transactions: txns.filter(tx => tx.amount > 0),
-    statementMonth: stmtMonth,
-    statementYear: String(year),
-  }
-}
-
-// ========================================
-// Parse Wells Fargo statement text into transactions
-// ========================================
-function parseWFText(text: string) {
-  const lines = text.split("\n")
-
-  // Extract year
-  const yearMatch = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+(\d{4})/)
-  const year = yearMatch ? parseInt(yearMatch[1]) : 2025
-
-  // Extract statement month
-  const MN: Record<string, string> = {
-    January:"01",February:"02",March:"03",April:"04",May:"05",June:"06",
-    July:"07",August:"08",September:"09",October:"10",November:"11",December:"12",
-  }
-  const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/)
-  const stmtMonth = monthMatch ? `${year}-${MN[monthMatch[1]] || "01"}` : `${year}-01`
-
-  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","purchase return","refund","overdraft protection from","instant pmt from"]
-  const debitKW = ["purchase authorized","recurring payment","online transfer to","atm withdrawal","zelle to","overdraft fee","monthly service fee","chase credit crd","so cal edison","vz wireless","recurring transfer to","save as you go","united fin cas"]
-
-  const txns: any[] = []
-  let inSection = false
-  let cur: any = null
-  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+)/
-
-  for (const line of lines) {
-    const t = line.trim()
-    if (/transaction history/i.test(t) || /account activity/i.test(t) || /checking.*statement/i.test(t)) { inSection = true; continue }
-    if (/^Totals|Monthly service fee summary|Account transaction fees/i.test(t)) {
-      if (cur) { txns.push(cur); cur = null }
-      inSection = false; continue
-    }
-    if (!inSection || t.length < 3) continue
-    if (/^Date\b.*(?:Number|Description)/i.test(t)) continue
-    if (/Ending daily.*balance/i.test(t)) continue
-
-    const m = t.match(txRe)
-    if (m) {
-      if (cur) txns.push(cur)
-      const mn = parseInt(m[1]), dy = parseInt(m[2]), rest = m[3]
-      const amts = rest.match(/[\d,]+\.\d{2}/g) || []
-      const desc = rest.replace(/\s+[\d,]+\.\d{2}/g,"").replace(/\s*-[\d,]+\.\d{2}/g,"").trim()
-      const amount = amts.length ? parseFloat(amts[0].replace(/,/g,"")) : 0
-      const dl = desc.toLowerCase()
-      const isCr = creditKW.some(k => dl.includes(k))
-      const isDr = debitKW.some(k => dl.includes(k))
-      cur = {
-        date: `${year}-${String(mn).padStart(2,"0")}-${String(dy).padStart(2,"0")}`,
-        description: desc, amount, type: isCr && !isDr ? "credit" : "debit", raw_line: t,
-      }
-    } else if (cur) {
-      let extra = t.replace(/\s*-?[\d,]+\.\d{2}\s*/g,"").replace(/S\d{15,}/g,"").replace(/P\d{15,}/g,"").replace(/Card \d{4}$/,"").trim()
-      if (extra && !/^\d+$/.test(extra)) cur.description += " " + extra
-      if (cur.amount === 0) { const a = t.match(/[\d,]+\.\d{2}/); if (a) cur.amount = parseFloat(a[0].replace(/,/g,"")) }
-    }
-  }
-  if (cur) txns.push(cur)
-
-  // FALLBACK: If section-based parsing found nothing, try parsing entire document
-  if (txns.length === 0) {
-    console.log("[wf] Section-based parsing found 0 txns, trying full-document fallback")
-    let fallbackCur: any = null
-    for (const line of lines) {
-      const t = line.trim()
-      if (t.length < 5) continue
-      const m = t.match(txRe)
-      if (m) {
-        if (fallbackCur) txns.push(fallbackCur)
-        const mn = parseInt(m[1]), dy = parseInt(m[2]), rest = m[3]
-        const amts = rest.match(/[\d,]+\.\d{2}/g) || []
-        const desc = rest.replace(/\s+[\d,]+\.\d{2}/g,"").replace(/\s*-[\d,]+\.\d{2}/g,"").trim()
-        const amount = amts.length ? parseFloat(amts[0].replace(/,/g,"")) : 0
-        const dl = desc.toLowerCase()
-        const isCr = creditKW.some(k => dl.includes(k))
-        if (amount > 0 && desc.length > 2 && !/^Date\b/i.test(desc) && !/^Ending/i.test(desc)) {
-          fallbackCur = {
-            date: `${year}-${String(mn).padStart(2,"0")}-${String(dy).padStart(2,"0")}`,
-            description: desc, amount, type: isCr ? "credit" : "debit", raw_line: t,
-          }
-        } else { fallbackCur = null }
-      } else if (fallbackCur) {
-        let extra = t.replace(/\s*-?[\d,]+\.\d{2}\s*/g,"").replace(/[SP]\d{15,}/g,"").replace(/Card \d{4}$/,"").trim()
-        if (extra && !/^\d+$/.test(extra) && extra.length < 100) fallbackCur.description += " " + extra
-      }
-    }
-    if (fallbackCur) txns.push(fallbackCur)
-    console.log(`[wf] Fallback found ${txns.length} transactions`)
-  }
-
-  const monthNum = parseInt(stmtMonth.split("-")[1] || "1")
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-
-  return {
-    transactions: txns.filter(tx => tx.amount > 0).map(tx => ({ ...tx, description: tx.description.replace(/\s+/g," ").trim() })),
-    statementMonth: monthNames[monthNum - 1] || "Unknown",
-    statementYear: String(year),
-  }
+  return parsed
 }
 
 // ========================================
 // Parse CSV text into transactions
+// Handles 3 formats:
+//   1. Wells Fargo text export (no headers, multiline, amount on its own line)
+//   2. Standard CSV with headers (Date, Description, Amount OR Date, Desc, Credit, Debit)
+//   3. Chase CSV (Transaction Date, Post Date, Description, Category, Type, Amount)
 // ========================================
 function parseCSVText(csvText: string) {
-  const lines = csvText.split("\n").filter(l => l.trim())
+  const rawLines = csvText.split("\n")
+
+  // ------- Detect format -------
+  const firstNonEmpty = rawLines.find(l => l.trim().length > 0) || ""
+
+  // FORMAT 1: Standard CSV with comma-separated headers
+  if (firstNonEmpty.includes(",") && /date/i.test(firstNonEmpty)) {
+    console.log("[csv] Detected standard CSV with headers")
+    return parseStandardCSV(rawLines)
+  }
+
+  // FORMAT 2: Wells Fargo text export (starts with M/D pattern, no commas in first line typically)
+  if (/^\d{1,2}\/\d{1,2}\s/.test(firstNonEmpty.trim())) {
+    console.log("[csv] Detected Wells Fargo text export format")
+    return parseWellsFargoTextExport(rawLines)
+  }
+
+  // FORMAT 3: Try standard CSV anyway as fallback
+  console.log("[csv] Attempting standard CSV fallback")
+  return parseStandardCSV(rawLines)
+}
+
+function parseStandardCSV(lines: string[]) {
   const txns: any[] = []
-  for (const line of lines) {
-    if (/Transaction History|^Date|Check Number|Totals|Monthly service/i.test(line)) continue
-    const parts = line.split(/\t|,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(p => p.trim().replace(/^"|"$/g,""))
-    if (parts.length < 2 || !/\d{1,2}\/\d{1,2}/.test(parts[0])) continue
-    const deposits = parseFloat((parts[2]||"0").replace(/,/g,"")) || 0
-    const withdrawals = parseFloat((parts[3]||"0").replace(/,/g,"")) || 0
-    if (deposits === 0 && withdrawals === 0) continue
-    const isIncome = deposits > 0
-    const [mo, da] = parts[0].split("/")
+  let headerLine = ""
+  let dataStartIdx = 0
+
+  // Find header row
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    if (/date/i.test(lines[i]) && (lines[i].includes(",") || lines[i].includes("\t"))) {
+      headerLine = lines[i].toLowerCase()
+      dataStartIdx = i + 1
+      break
+    }
+  }
+
+  const sep = headerLine.includes("\t") ? "\t" : ","
+  const headers = headerLine.split(sep).map(h => h.trim().replace(/^"|"$/g, ""))
+
+  // Find column indices
+  const dateIdx = headers.findIndex(h => /^(transaction\s*)?date$/i.test(h))
+  const descIdx = headers.findIndex(h => /description|memo|merchant/i.test(h))
+  const amountIdx = headers.findIndex(h => /^amount$/i.test(h))
+  const creditIdx = headers.findIndex(h => /credit|deposit/i.test(h))
+  const debitIdx = headers.findIndex(h => /debit|withdrawal|withdraw/i.test(h))
+
+  for (let i = dataStartIdx; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line || /^Transaction History|^Totals|Monthly service/i.test(line)) continue
+
+    const parts = line.split(sep === "\t" ? "\t" : /,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(p => p.trim().replace(/^"|"$/g, ""))
+    if (parts.length < 2) continue
+
+    const dateStr = parts[dateIdx >= 0 ? dateIdx : 0] || ""
+    if (!/\d{1,2}\/\d{1,2}/.test(dateStr)) continue
+
+    const desc = parts[descIdx >= 0 ? descIdx : 1] || ""
+
+    let amount = 0
+    let isIncome = false
+
+    if (amountIdx >= 0) {
+      amount = parseFloat((parts[amountIdx] || "0").replace(/[,$"]/g, "")) || 0
+      isIncome = amount > 0
+      amount = Math.abs(amount)
+    } else {
+      const credit = parseFloat((parts[creditIdx >= 0 ? creditIdx : 2] || "0").replace(/[,$"]/g, "")) || 0
+      const debit = parseFloat((parts[debitIdx >= 0 ? debitIdx : 3] || "0").replace(/[,$"]/g, "")) || 0
+      if (credit === 0 && debit === 0) continue
+      isIncome = credit > 0
+      amount = Math.abs(isIncome ? credit : debit)
+    }
+
+    if (amount === 0) continue
+
+    const dateParts = dateStr.split("/")
+    const mo = (dateParts[0] || "01").padStart(2, "0")
+    const da = (dateParts[1] || "01").padStart(2, "0")
+    const yr = dateParts[2] ? (dateParts[2].length === 2 ? "20" + dateParts[2] : dateParts[2]) : "2025"
+
     txns.push({
-      date: `2025-${(mo||"01").padStart(2,"0")}-${(da||"01").padStart(2,"0")}`,
-      description: (parts[1]||"").substring(0,200),
-      amount: Math.abs(isIncome ? deposits : withdrawals),
+      date: `${yr}-${mo}-${da}`,
+      description: desc.substring(0, 200),
+      amount,
       type: isIncome ? "credit" : "debit",
       raw_line: line,
     })
   }
-  return { transactions: txns, statementMonth: "Multiple", statementYear: "2025" }
+
+  // Determine month from most common transaction month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => {
+    const m = t.date.substring(5, 7)
+    monthCounts[m] = (monthCounts[m] || 0) + 1
+  })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+  const stmtMonth = monthNames[parseInt(topMonth) - 1] || "Unknown"
+  const stmtYear = txns[0]?.date?.substring(0, 4) || "2025"
+
+  return { transactions: txns, statementMonth: stmtMonth, statementYear: stmtYear }
+}
+
+function parseWellsFargoTextExport(lines: string[]) {
+  const txns: any[] = []
+  const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+)/
+
+  // Credit keywords (these are deposits / income)
+  const creditKW = ["stripe transfer", "online transfer from", "deposit", "credit memo", "interest payment"]
+
+  let current: { date: string; description: string; amounts: number[]; type: string; raw: string } | null = null
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (/Transaction History|^Date\b|Check Number|Totals|Monthly service|Beginning balance|Ending balance/i.test(line)) continue
+
+    const m = line.match(txRe)
+    if (m) {
+      // Save previous transaction
+      if (current) {
+        const amount = current.amounts[0] || 0
+        if (amount > 0) {
+          txns.push({
+            date: current.date,
+            description: current.description.replace(/\s+/g, " ").trim(),
+            amount,
+            type: current.type,
+            raw_line: current.raw,
+          })
+        }
+      }
+
+      const mo = m[1].padStart(2, "0")
+      const da = m[2].padStart(2, "0")
+      const rest = m[3]
+
+      // Extract amounts from the rest of the line (could be at end)
+      const amtMatches = rest.match(/[\d,]+\.\d{2}/g)
+      const amounts = amtMatches ? amtMatches.map(a => parseFloat(a.replace(/,/g, ""))) : []
+      const desc = rest.replace(/\s+[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})?$/g, "").trim()
+
+      const dl = desc.toLowerCase()
+      const isCr = creditKW.some(k => dl.includes(k))
+
+      current = {
+        date: `2025-${mo}-${da}`,
+        description: desc,
+        amounts,
+        type: isCr ? "credit" : "debit",
+        raw: line,
+      }
+    } else if (current) {
+      // This line is a continuation OR a standalone amount
+      const pureAmount = line.match(/^([\d,]+\.\d{2})(\s+([\d,]+\.\d{2}))?$/)
+      if (pureAmount) {
+        // Line is just amount(s) -- first is transaction amount, second is running balance
+        if (current.amounts.length === 0) {
+          current.amounts.push(parseFloat(pureAmount[1].replace(/,/g, "")))
+        }
+        if (pureAmount[3]) {
+          // Second number is balance, ignore it
+        }
+      } else {
+        // Continuation of description
+        const cleaned = line.replace(/\s*[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})?$/g, "").trim()
+        if (cleaned.length > 0 && cleaned.length < 150) {
+          current.description += " " + cleaned
+          // Check if this line also has amounts at the end
+          const lineAmts = line.match(/[\d,]+\.\d{2}/g)
+          if (lineAmts && current.amounts.length === 0) {
+            current.amounts.push(parseFloat(lineAmts[0].replace(/,/g, "")))
+          }
+        }
+      }
+    }
+  }
+
+  // Don't forget the last transaction
+  if (current) {
+    const amount = current.amounts[0] || 0
+    if (amount > 0) {
+      txns.push({
+        date: current.date,
+        description: current.description.replace(/\s+/g, " ").trim(),
+        amount,
+        type: current.type,
+        raw_line: current.raw,
+      })
+    }
+  }
+
+  // Determine statement month from most common month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => {
+    const m = t.date.substring(5, 7)
+    monthCounts[m] = (monthCounts[m] || 0) + 1
+  })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+
+  console.log(`[csv-wf] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+
+  return {
+    transactions: txns,
+    statementMonth: monthNames[parseInt(topMonth) - 1] || "Unknown",
+    statementYear: "2025",
+  }
 }
 
 // ========================================
@@ -483,86 +517,33 @@ function toUIFormat(categorized: any[]) {
 // ========================================
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
-    const file = formData.get("file") as File
-    const accountName = formData.get("accountName") as string
-    const accountType = formData.get("accountType") as string
+    // Frontend sends JSON with file content already read
+    const body = await request.json()
+    const { fileName, fileContent, isPDF, accountName, accountType } = body
 
-    if (!file || !accountName || !accountType) {
+    if (!fileName || !fileContent || !accountName || !accountType) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    console.log("[upload] Processing:", file.name, "Size:", file.size, "Account:", accountName)
+    console.log("[upload] Processing:", fileName, "isPDF:", isPDF, "contentLength:", fileContent.length, "Account:", accountName)
 
     let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
 
-    // === PDF ===
-    if (file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf") {
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-
-      console.log("[upload] Extracting text from PDF, buffer size:", buffer.length)
-
-      let pdfText: string
-      try {
-        pdfText = await extractPDFText(buffer)
-      } catch (e: any) {
-        console.error("[upload] PDF extraction failed:", e.message)
-        return NextResponse.json({ error: e.message, success: false }, { status: 500 })
-      }
-
-      console.log("[upload] PDF text length:", pdfText.length)
-
-      if (pdfText.length < 100) {
-        return NextResponse.json({
-          error: "PDF appears empty or scanned. Download a digital PDF from your bank's online banking.",
-          success: false,
-        }, { status: 400 })
-      }
-
-      // Auto-detect statement type first
-      const stmtType = detectStatementType(pdfText)
-      console.log(`[upload] Auto-detected: ${stmtType}`)
-
-      if (stmtType === "chase") {
-        parsed = parseChaseText(pdfText)
-        console.log(`[upload] Chase: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
-      } else if (stmtType === "barclays") {
-        parsed = parseBarclaysText(pdfText)
-        console.log(`[upload] Barclays: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
-      } else {
-        // Default to Wells Fargo
-        parsed = parseWFText(pdfText)
-        console.log(`[upload] WF: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
-
-        // If Wells Fargo found nothing, try Chase and Barclays as fallback
-        if (parsed.transactions.length === 0) {
-          const chaseParsed = parseChaseText(pdfText)
-          const barclaysParsed = parseBarclaysText(pdfText)
-          if (chaseParsed.transactions.length > barclaysParsed.transactions.length) {
-            parsed = chaseParsed
-            console.log(`[upload] Fallback Chase: ${parsed.transactions.length} txns`)
-          } else if (barclaysParsed.transactions.length > 0) {
-            parsed = barclaysParsed
-            console.log(`[upload] Fallback Barclays: ${parsed.transactions.length} txns`)
-          }
-        }
-      }
+    // === PDF (text already extracted on frontend via pdfjs-dist) ===
+    if (isPDF) {
+      console.log("[upload] Parsing PDF text (extracted on frontend), length:", fileContent.length)
+      parsed = parsePDFText(fileContent)
+      console.log(`[upload] PDF parsed: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
     }
-    // === CSV ===
-    else if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
-      const csvText = await file.text()
-      parsed = parseCSVText(csvText)
-      console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
-    }
-    // === UNSUPPORTED ===
+    // === CSV (raw text from frontend) ===
     else {
-      return NextResponse.json({ error: "Unsupported file type. Use PDF or CSV." }, { status: 400 })
+      parsed = parseCSVText(fileContent)
+      console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
     }
 
     if (parsed.transactions.length === 0) {
       return NextResponse.json({
-        error: `No transactions found in ${file.name}. Supports Wells Fargo, Chase Freedom, and Barclays View statements.`,
+        error: `No transactions found in ${fileName}. Supports Wells Fargo, Chase, and Barclays statements.`,
         success: false,
       }, { status: 400 })
     }
@@ -583,7 +564,7 @@ export async function POST(request: NextRequest) {
       transactions,
       month: parsed.statementMonth,
       year: parsed.statementYear,
-      message: `Processed ${transactions.length} transactions from ${file.name}`,
+      message: `Processed ${transactions.length} transactions from ${fileName}`,
     })
 
   } catch (error: any) {

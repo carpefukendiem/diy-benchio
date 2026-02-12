@@ -154,12 +154,41 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
 
       try {
-        const formData = new FormData()
-        formData.append("file", file)
-        formData.append("accountName", accountName)
-        formData.append("accountType", accountType)
+        // Read ALL files on the FRONTEND as text.
+        // CSVs: read directly as text.
+        // PDFs: extract text using pdfjs-dist on the client, then send as text.
+        const isPDF = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf"
 
-        const response = await fetch("/api/statements/upload", { method: "POST", body: formData })
+        let fileContent: string
+
+        if (isPDF) {
+          // Extract text from PDF on the frontend using unpdf
+          // unpdf bundles pdfjs with the worker inlined - no CDN fetch needed
+          const { extractText, getDocumentProxy } = await import("unpdf")
+
+          const arrayBuffer = await file.arrayBuffer()
+          const pdf = await getDocumentProxy(new Uint8Array(arrayBuffer))
+          const { totalPages, text } = await extractText(pdf, { mergePages: true })
+
+          fileContent = typeof text === "string" ? text : (text as string[]).join("\n")
+          console.log(`[v0] Extracted PDF text on frontend: ${file.name}, pages=${totalPages}, textLength=${fileContent.length}`)
+        } else {
+          fileContent = await file.text()
+          console.log(`[v0] Read CSV on frontend: ${file.name}, textLength=${fileContent.length}`)
+        }
+
+        const response = await fetch("/api/statements/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileContent,
+            isPDF,
+            accountName,
+            accountType,
+          }),
+        })
+        console.log(`[v0] Response for ${file.name}: status=${response.status}`)
 
         if (response.ok) {
           const data = await response.json()
@@ -207,6 +236,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
           }
         } else {
           const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
+          console.log(`[v0] Error for ${file.name}:`, errData)
           setFileProgress(prev => prev.map((p, idx) =>
             idx === i ? { ...p, status: "error", error: errData.error || `Failed (${response.status})` } : p
           ))
