@@ -25,12 +25,18 @@ interface InteractiveReportsProps {
   dateRange: { start: string; end: string }
 }
 
-// Schedule C line mapping — IRS accurate
+// Schedule C line mapping — IRS accurate, aligned with bench.io categories
 const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?: number }> = {
+  // --- INCOME ---
   "Sales Revenue": { line: "1", label: "Gross receipts or sales" },
   "Freelance Income": { line: "1", label: "Gross receipts or sales" },
-  "Other Income": { line: "6", label: "Other income" },
+  "Returns & Allowances": { line: "2", label: "Returns and allowances" },
   "Refunds Given": { line: "2", label: "Returns and allowances" },
+  "Interest Income": { line: "6", label: "Other income (interest)" },
+  "Other Income": { line: "6", label: "Other income" },
+  // --- COGS (Line 4) ---
+  "Cost of Service": { line: "4", label: "Cost of goods sold" },
+  // --- EXPENSES ---
   "Advertising & Marketing": { line: "8", label: "Advertising" },
   "Soccer Team Sponsorship": { line: "8", label: "Advertising" },
   "Social Media & Online Presence": { line: "8", label: "Advertising" },
@@ -38,25 +44,35 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "Parking Expense": { line: "9", label: "Car and truck expenses" },
   "Merchant Processing Fees": { line: "10", label: "Commissions and fees" },
   "Merchant Fees Expense": { line: "10", label: "Commissions and fees" },
+  "Contract Labor": { line: "11", label: "Contract labor" },
+  "Equipment & Depreciation": { line: "13", label: "Depreciation and section 179" },
+  "Computer Equipment Expense": { line: "13", label: "Depreciation and section 179" },
   "Insurance Expense - Business": { line: "15", label: "Insurance (other than health)" },
-  "Health Insurance": { line: "15", label: "Insurance / Self-employed health ins deduction" },
-  "Bank & ATM Fee Expense": { line: "16b", label: "Interest (other)" },
+  "Insurance Expense - Auto": { line: "15", label: "Insurance (auto)" },
+  "Health Insurance": { line: "S1-17", label: "Self-employed health insurance (Schedule 1 Line 17 -- above-the-line)" },
+  "Interest Expense": { line: "16b", label: "Interest (other)" },
+  "Bank & ATM Fee Expense": { line: "16b", label: "Bank fees / Interest (other)" },
   "Professional Service Expense": { line: "17", label: "Legal and professional services" },
   "Tax Software & Services": { line: "17", label: "Legal and professional services" },
   "Office Supplies": { line: "18", label: "Office expense" },
   "Office Supply Expense": { line: "18", label: "Office expense" },
   "Office Kitchen Supplies": { line: "18", label: "Office expense" },
-  "Software & Web Hosting Expense": { line: "18", label: "Office expense" },
+  "Software & Web Hosting Expense": { line: "18", label: "Office expense / Software" },
   "Rent Expense": { line: "20b", label: "Rent (other business property)" },
   "Travel Expense": { line: "24a", label: "Travel" },
   "Business Meals Expense": { line: "24b", label: "Meals (50% deductible)", deductPct: 50 },
   "Phone & Internet Expense": { line: "25", label: "Utilities" },
   "Utilities Expense": { line: "25", label: "Utilities" },
+  "License & Fee Expense": { line: "27a", label: "Other expenses (licenses & permits)" },
+  "California LLC Fee": { line: "27a", label: "Other expenses (CA franchise tax)" },
   "Client Gifts": { line: "27a", label: "Other expenses (gifts $25/person limit)" },
   "Eye Care - Business Expense": { line: "27a", label: "Other expenses (occupational eye care)" },
-  "Education & Training": { line: "27a", label: "Other expenses" },
+  "Education & Training": { line: "27a", label: "Other expenses (training)" },
+  "Postage & Shipping Expense": { line: "27a", label: "Other expenses (postage)" },
+  "Waste & Disposal": { line: "27a", label: "Other expenses (waste)" },
   "Home Office Expense": { line: "30", label: "Business use of home" },
-  "Business Treasury Investment": { line: "N/A", label: "Asset — not current year deduction" },
+  "SEP-IRA Contribution": { line: "S1-16", label: "Self-employed SEP/SIMPLE/qualified plans (Schedule 1)" },
+  "Business Treasury Investment": { line: "N/A", label: "Asset -- not current year deduction" },
 }
 
 export function InteractiveReports({ transactions, onUpdateTransaction, dateRange }: InteractiveReportsProps) {

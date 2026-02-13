@@ -396,8 +396,9 @@ export default function CaliforniaBusinessAccounting() {
   const stats = useMemo(() => {
     if (!currentBusiness) return {
       totalBalance: 0, totalRevenue: 0, totalExpenses: 0, totalDeductible: 0,
+      schedCDeductions: 0, healthInsuranceTotal: 0, sepIraTotal: 0,
       netProfit: 0, seTax: 0, seTaxDeduction: 0, qbiDeduction: 0,
-      federalTax: 0, caTax: 0, caLLCFee: 0,
+      federalTax: 0, caTax: 0, caLLCFee: 0, agi: 0,
       taxSavings: 0, estimatedTaxLiability: 0,
     }
 
@@ -409,38 +410,56 @@ export default function CaliforniaBusinessAccounting() {
       .filter((t) => t.isIncome)
       .reduce((sum, t) => sum + t.amount, 0)
 
-    // Only count business-deductible expenses (exclude personal, transfers, owner draws, uncategorized)
+    // Classify every non-income transaction
     const personalKeywords = ["personal", "crypto"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
-    const businessExpenses = currentBusiness.transactions.filter((t) => {
-      if (t.isIncome) return false
+    // Above-the-line deductions (Schedule 1) -- deducted from AGI, NOT Schedule C
+    const aboveTheLineCategories = ["health insurance", "sep-ira"]
+
+    const businessExpenses: typeof currentBusiness.transactions = []
+    let healthInsuranceTotal = 0
+    let sepIraTotal = 0
+
+    currentBusiness.transactions.forEach((t) => {
+      if (t.isIncome) return
       const cl = (t.category || "").toLowerCase()
-      if (!cl || cl.includes("uncategorized")) return false
-      if (personalKeywords.some(k => cl.includes(k))) return false
-      if (transferKeywords.some(k => cl.includes(k))) return false
-      return true
+      if (!cl || cl.includes("uncategorized")) return
+      if (personalKeywords.some(k => cl.includes(k))) return
+      if (transferKeywords.some(k => cl.includes(k))) return
+      // Separate above-the-line deductions
+      if (cl.includes("health insurance")) { healthInsuranceTotal += t.amount; return }
+      if (cl.includes("sep-ira")) { sepIraTotal += t.amount; return }
+      businessExpenses.push(t)
     })
+
     const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
     // Apply 50% meals deduction rule per IRS
-    const totalDeductible = businessExpenses.reduce((sum, t) => {
+    const schedCDeductions = businessExpenses.reduce((sum, t) => {
       const cl = (t.category || "").toLowerCase()
       if (cl.includes("meals")) return sum + t.amount * 0.5
       return sum + t.amount
     }, 0)
+    // Total deductible = Schedule C expenses + above-the-line items
+    const totalDeductible = schedCDeductions + healthInsuranceTotal + sepIraTotal
 
     // --- IRS-accurate tax calculation for Schedule C sole proprietor ---
-    const netProfit = Math.max(0, totalRevenue - totalDeductible)
+    // Schedule C: Revenue - COGS - Business expenses = Net Profit
+    const netProfit = Math.max(0, totalRevenue - schedCDeductions)
 
-    // 1. Self-employment tax: 15.3% on 92.35% of net profit
-    const seTaxableIncome = netProfit * 0.9235
-    const seTax = seTaxableIncome * 0.153
+    // 1. Self-employment tax: 15.3% on 92.35% of net profit (up to SS wage base)
+    const ssWageBase2025 = 176100
+    const seTaxableIncome = Math.min(netProfit * 0.9235, ssWageBase2025)
+    const ssTax = Math.min(seTaxableIncome, ssWageBase2025) * 0.124 // Social Security 12.4%
+    const medicareTax = (netProfit * 0.9235) * 0.029 // Medicare 2.9% on ALL
+    const seTax = ssTax + medicareTax
     const seTaxDeduction = seTax * 0.5 // Deductible half of SE tax
 
-    // 2. QBI deduction (Sec 199A): 20% of net profit for pass-through businesses under threshold
+    // 2. QBI deduction (Sec 199A): 20% of QBI for pass-through under $191,950 (2025)
     const qbiDeduction = netProfit * 0.20
 
     // 3. Adjusted Gross Income for federal
-    const agi = netProfit - seTaxDeduction
+    // AGI = Net Profit - 1/2 SE tax - SE health insurance - SEP-IRA
+    const agi = Math.max(0, netProfit - seTaxDeduction - healthInsuranceTotal - sepIraTotal)
 
     // 4. Standard deduction 2025: $15,000 single
     const standardDeduction = 15000
@@ -452,20 +471,20 @@ export default function CaliforniaBusinessAccounting() {
     const federalTax = calculateFederalTax(federalTaxableIncome)
 
     // 7. California tax (single filer, 2025 brackets)
-    // CA doesn't allow QBI deduction, uses its own standard deduction ($5,540)
+    // CA doesn't allow QBI deduction but does allow SE health ins + SEP-IRA deductions
     const caStandardDeduction = 5540
     const caTaxableIncome = Math.max(0, agi - caStandardDeduction)
     const caTax = calculateCaliforniaTax(caTaxableIncome)
-    // CA LLC fee: $800 minimum if gross > $250K, otherwise $0 for most small LLCs
-    // (The $800 minimum was eliminated for tax years 2024-2026 for LLCs with < $250K revenue)
+    // CA LLC fee waived for 2024-2026 if revenue < $250K
     const caLLCFee = totalRevenue >= 250000 ? 800 : 0
 
     // Total estimated tax liability
     const estimatedTaxLiability = Math.max(0, federalTax + seTax + caTax + caLLCFee)
 
-    // Tax savings = what you'd owe with $0 deductions minus what you actually owe
+    // Tax savings = what you'd owe with $0 deductions vs what you actually owe
     const noDeductionProfit = totalRevenue
-    const noDeductionSE = (noDeductionProfit * 0.9235) * 0.153
+    const noDeductionSEIncome = Math.min(noDeductionProfit * 0.9235, ssWageBase2025)
+    const noDeductionSE = (noDeductionSEIncome * 0.124) + ((noDeductionProfit * 0.9235) * 0.029)
     const noDeductionAGI = noDeductionProfit - (noDeductionSE * 0.5)
     const noDeductionFederal = calculateFederalTax(Math.max(0, noDeductionAGI - standardDeduction - (noDeductionProfit * 0.20)))
     const noDeductionCA = calculateCaliforniaTax(Math.max(0, noDeductionAGI - caStandardDeduction))
@@ -474,8 +493,9 @@ export default function CaliforniaBusinessAccounting() {
 
     return {
       totalBalance, totalRevenue, totalExpenses, totalDeductible,
+      schedCDeductions, healthInsuranceTotal, sepIraTotal,
       netProfit, seTax, seTaxDeduction, qbiDeduction,
-      federalTax, caTax, caLLCFee,
+      federalTax, caTax, caLLCFee, agi,
       taxSavings, estimatedTaxLiability,
     }
   }, [currentBusiness])
@@ -646,12 +666,15 @@ export default function CaliforniaBusinessAccounting() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Business Deductions</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Deductions</CardTitle>
                 <TrendingDown className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-blue-600">${stats.totalDeductible.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <p className="text-xs text-muted-foreground">Meals at 50%, all other at 100%</p>
+                <p className="text-xs text-muted-foreground">
+                  Sched C: ${stats.schedCDeductions.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  {stats.healthInsuranceTotal > 0 && ` + Health: $${stats.healthInsuranceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                </p>
               </CardContent>
             </Card>
 
@@ -662,7 +685,7 @@ export default function CaliforniaBusinessAccounting() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">${stats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <p className="text-xs text-muted-foreground">Revenue minus deductions</p>
+                <p className="text-xs text-muted-foreground">Revenue - Sched C expenses (Line 31)</p>
               </CardContent>
             </Card>
 
@@ -673,36 +696,48 @@ export default function CaliforniaBusinessAccounting() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-700 dark:text-green-400">${stats.estimatedTaxLiability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <p className="text-xs text-muted-foreground">Federal + SE + CA (IRS brackets)</p>
+                <p className="text-xs text-muted-foreground">
+                  {stats.totalRevenue > 0
+                    ? `Effective rate: ${((stats.estimatedTaxLiability / stats.totalRevenue) * 100).toFixed(1)}% of revenue`
+                    : "Federal + SE + CA (IRS brackets)"}
+                </p>
               </CardContent>
             </Card>
           </div>
 
           {/* Tax Breakdown Detail Row */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
             <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">SE Tax (15.3%)</p>
-              <p className="text-sm font-semibold">${stats.seTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-muted-foreground">Sched C Expenses</p>
+              <p className="text-sm font-semibold text-blue-600">${stats.schedCDeductions.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
             <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">SE Deduction (50%)</p>
-              <p className="text-sm font-semibold text-green-600">-${stats.seTaxDeduction.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-muted-foreground">Health Ins (S1-17)</p>
+              <p className="text-sm font-semibold text-green-600">${stats.healthInsuranceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
             <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">QBI Deduction (20%)</p>
-              <p className="text-sm font-semibold text-green-600">-${stats.qbiDeduction.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-muted-foreground">1/2 SE Tax Ded.</p>
+              <p className="text-sm font-semibold text-green-600">${stats.seTaxDeduction.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
             <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Federal Income Tax</p>
-              <p className="text-sm font-semibold">${stats.federalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-muted-foreground">QBI (Sec 199A)</p>
+              <p className="text-sm font-semibold text-green-600">${stats.qbiDeduction.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">SE Tax (SS+Med)</p>
+              <p className="text-sm font-semibold">${stats.seTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Federal Tax</p>
+              <p className="text-sm font-semibold">${stats.federalTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">California Tax</p>
-              <p className="text-sm font-semibold">${stats.caTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-sm font-semibold">${stats.caTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
             <div className="rounded-lg border p-3 bg-green-50/50 dark:bg-green-950/20">
-              <p className="text-xs text-muted-foreground">Deduction Savings</p>
-              <p className="text-sm font-semibold text-green-600">${stats.taxSavings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-muted-foreground">You Save</p>
+              <p className="text-sm font-semibold text-green-600">${stats.taxSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
             </div>
           </div>
 
@@ -806,12 +841,14 @@ const DEDUCTION_LABELS: Record<string, string> = {
   advertising: "Advertising & Marketing",
   marketing: "Marketing & Advertising",
   vehicle: "Vehicle & Mileage",
+  "auto-insurance": "Auto Insurance",
   "merchant-fees": "Merchant & Platform Fees",
   contractors: "Contract Labor (1099s)",
   equipment: "Equipment & Depreciation",
   insurance: "Business Insurance",
-  "health-insurance": "Self-Employed Health Insurance",
-  "bank-fees": "Interest & Bank Fees",
+  "health-insurance": "Self-Employed Health Insurance (Sched 1)",
+  "bank-fees": "Bank & ATM Fees",
+  interest: "Interest Expense",
   professional: "Professional Services",
   office: "Office Supplies & Expenses",
   travel: "Business Travel",
@@ -823,9 +860,12 @@ const DEDUCTION_LABELS: Record<string, string> = {
   education: "Education & Training",
   "home-office": "Home Office Deduction",
   "california-fees": "California LLC / Franchise Tax",
+  "license-fees": "License & Fee Expense",
   rent: "Rent Expense",
-  "sep-ira": "SEP-IRA / Solo 401(k)",
+  "sep-ira": "SEP-IRA / Solo 401(k) (Sched 1)",
   waste: "Waste & Disposal",
+  postage: "Postage & Shipping",
+  cogs: "Cost of Service / COGS",
 }
 
 // Map wizard deduction IDs to actual transaction category names
@@ -833,12 +873,14 @@ const DEDUCTION_CATEGORY_MAP: Record<string, string[]> = {
   advertising: ["Advertising & Marketing", "Social Media & Online Presence", "Soccer Team Sponsorship"],
   marketing: ["Advertising & Marketing", "Social Media & Online Presence", "Soccer Team Sponsorship"],
   vehicle: ["Gas & Auto Expense", "Parking Expense"],
+  "auto-insurance": ["Insurance Expense - Auto"],
   "merchant-fees": ["Merchant Processing Fees", "Merchant Fees Expense"],
   contractors: ["Contract Labor"],
-  equipment: ["Equipment & Depreciation"],
+  equipment: ["Equipment & Depreciation", "Computer Equipment Expense"],
   insurance: ["Insurance Expense - Business"],
   "health-insurance": ["Health Insurance"],
   "bank-fees": ["Bank & ATM Fee Expense"],
+  interest: ["Interest Expense"],
   professional: ["Professional Service Expense", "Tax Software & Services"],
   office: ["Office Supplies", "Office Supply Expense", "Office Kitchen Supplies"],
   travel: ["Travel Expense"],
@@ -850,9 +892,12 @@ const DEDUCTION_CATEGORY_MAP: Record<string, string[]> = {
   education: ["Education & Training"],
   "home-office": ["Home Office Expense"],
   "california-fees": ["California LLC Fee"],
+  "license-fees": ["License & Fee Expense"],
   rent: ["Rent Expense"],
   "sep-ira": ["SEP-IRA Contribution"],
   waste: ["Waste & Disposal"],
+  postage: ["Postage & Shipping Expense"],
+  cogs: ["Cost of Service"],
 }
 
 function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessData; stats: any }) {
@@ -881,7 +926,9 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
                 const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
                 const deductPct = deduction === "meals" ? 0.5 : 1
                 const deductibleAmount = totalAmount * deductPct
-                const savings = Math.round(deductibleAmount * 0.35)
+                // Effective marginal rate: ~15.3% SE + ~12% federal + ~4-6% CA for this income range
+                const effectiveRate = stats.totalRevenue > 0 ? Math.min(stats.estimatedTaxLiability / stats.totalRevenue, 0.40) : 0.25
+                const savings = Math.round(deductibleAmount * effectiveRate)
 
                 return (
                   <Card key={deduction} className="hover:shadow-md transition-shadow">
@@ -916,42 +963,69 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
 
       <Card>
         <CardHeader>
-          <CardTitle>IRS Tax Minimization Summary</CardTitle>
-          <CardDescription>How your deductions reduce your tax liability using real IRS brackets</CardDescription>
+          <CardTitle>IRS Tax Minimization Waterfall</CardTitle>
+          <CardDescription>Step-by-step: how your deductions reduce taxable income (bench.io-style P&L)</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 rounded-lg border">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Income Statement (Schedule C)</p>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
                 <span className="text-sm">Gross Revenue (Line 1)</span>
                 <span className="font-bold">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg border">
-                <span className="text-sm">Business Deductions</span>
-                <span className="font-bold text-blue-600">-${stats.totalDeductible.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">Schedule C Expenses</span>
+                <span className="font-bold text-blue-600">-${stats.schedCDeductions.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg border">
-                <span className="text-sm">Net Profit (Schedule C)</span>
-                <span className="font-bold">${stats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border-2 border-foreground/20 font-semibold">
+                <span className="text-sm">Net Profit (Line 31)</span>
+                <span>${stats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg border">
-                <span className="text-sm">SE Tax Deduction (50%)</span>
+
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-4 mb-1">Above-the-Line Deductions (Schedule 1)</p>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">1/2 Self-Employment Tax</span>
                 <span className="font-bold text-green-600">-${stats.seTaxDeduction.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg border">
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">SE Health Insurance (Line 17)</span>
+                <span className="font-bold text-green-600">-${stats.healthInsuranceTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              {stats.sepIraTotal > 0 && (
+                <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                  <span className="text-sm">SEP-IRA (Line 16)</span>
+                  <span className="font-bold text-green-600">-${stats.sepIraTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
                 <span className="text-sm">QBI Deduction (Sec 199A, 20%)</span>
                 <span className="font-bold text-green-600">-${stats.qbiDeduction.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-lg border">
-                <span className="text-sm">Standard Deduction (Single)</span>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">Standard Deduction (Single, 2025)</span>
                 <span className="font-bold text-green-600">-$15,000.00</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-950/30 rounded-lg border-2 border-green-200 dark:border-green-800">
-                <span className="font-semibold">Total Tax Liability</span>
-                <span className="font-bold text-green-700 dark:text-green-400">${stats.estimatedTaxLiability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-4 mb-1">Tax Liability</p>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">Self-Employment Tax (SS + Medicare)</span>
+                <span className="font-bold">${stats.seTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-950/30 rounded-lg">
-                <span className="font-semibold">Saved by Deductions</span>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">Federal Income Tax</span>
+                <span className="font-bold">${stats.federalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-lg border">
+                <span className="text-sm">California Income Tax</span>
+                <span className="font-bold">${stats.caTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-950/30 rounded-lg border-2 border-green-200 dark:border-green-800 mt-2">
+                <span className="font-bold">Total Estimated Tax</span>
+                <span className="font-bold text-lg text-green-700 dark:text-green-400">${stats.estimatedTaxLiability.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-lg bg-green-50/50 dark:bg-green-950/20">
+                <span className="text-sm font-semibold">Saved by Your Deductions</span>
                 <span className="font-bold text-green-600">${stats.taxSavings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
@@ -960,27 +1034,31 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
               <ul className="text-sm space-y-2">
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">1.</span>
-                  <span><strong>SEP-IRA / Solo 401(k)</strong> — Contribute up to 25% of net profit (max $69,000) before filing deadline to reduce taxable income further</span>
+                  <span><strong>SEP-IRA / Solo 401(k)</strong> — Contribute up to 25% of net self-employment earnings (max $70,000 for 2025). Can contribute until April filing deadline. At your income, this could save $2,000-$4,000+ in taxes.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">2.</span>
-                  <span><strong>Home Office (Simplified)</strong> — $5/sq ft up to 300 sq ft = $1,500 additional deduction if you have a dedicated workspace</span>
+                  <span><strong>Home Office (Simplified)</strong> — $5/sq ft up to 300 sq ft = $1,500 additional deduction. Your bench.io shows $2,249 in facility/utilities -- make sure home office % is applied.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">3.</span>
-                  <span><strong>Section 179 / Equipment</strong> — Buy business equipment before Dec 31 to deduct the full cost this tax year</span>
+                  <span><strong>Business Travel (Dec trip)</strong> — Flights, lodging, ground transport, 50% of meals while traveling are fully deductible. Document the business purpose for each day.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">4.</span>
-                  <span><strong>Mileage Tracking</strong> — $0.70/mile for 2025. Use MileIQ or Everlance to log business drives</span>
+                  <span><strong>Mileage Tracking</strong> — $0.70/mile for 2025. Your bench.io showed $1,600 gas + $1,805 auto insurance. Standard mileage may yield a higher deduction.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">5.</span>
-                  <span><strong>Health Insurance</strong> — Self-employed health premiums are 100% deductible on Schedule 1 (not Schedule C)</span>
+                  <span><strong>Health Insurance (Sched 1)</strong> — Your $11K+ in premiums are deducted above-the-line, reducing AGI before all other calculations. This is already being applied.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-green-500 mt-0.5">6.</span>
-                  <span><strong>Categorize Everything</strong> — Review uncategorized transactions; each missed deduction increases your tax bill</span>
+                  <span><strong>Section 179 / Equipment</strong> — Buy needed business equipment before Dec 31 to deduct the full cost this tax year instead of depreciating.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-green-500 mt-0.5">7.</span>
+                  <span><strong>Categorize Everything</strong> — Each uncategorized transaction is a potential missed deduction. Your bench.io 2024 showed $558 in "Awaiting Category" -- every dollar counts.</span>
                 </li>
               </ul>
             </div>

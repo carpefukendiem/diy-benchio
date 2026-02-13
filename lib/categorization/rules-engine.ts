@@ -50,6 +50,19 @@ export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boole
   "00000000-0000-0000-0002-000000000036": { name: "Health Insurance", isIncome: false },
   "00000000-0000-0000-0002-000000000037": { name: "Rent Expense", isIncome: false },
   "00000000-0000-0000-0002-000000000038": { name: "Business Treasury Investment", isIncome: false },
+  "00000000-0000-0000-0002-000000000039": { name: "Insurance Expense - Auto", isIncome: false },
+  "00000000-0000-0000-0002-000000000040": { name: "Interest Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000041": { name: "License & Fee Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000042": { name: "Cost of Service", isIncome: false },
+  "00000000-0000-0000-0002-000000000043": { name: "Contract Labor", isIncome: false },
+  "00000000-0000-0000-0002-000000000044": { name: "Postage & Shipping Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000045": { name: "Equipment & Depreciation", isIncome: false },
+  "00000000-0000-0000-0002-000000000046": { name: "Computer Equipment Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000047": { name: "Waste & Disposal", isIncome: false },
+  "00000000-0000-0000-0002-000000000048": { name: "California LLC Fee", isIncome: false },
+  "00000000-0000-0000-0002-000000000049": { name: "SEP-IRA Contribution", isIncome: false },
+  "00000000-0000-0000-0001-000000000005": { name: "Interest Income", isIncome: true },
+  "00000000-0000-0000-0001-000000000006": { name: "Returns & Allowances", isIncome: false },
   "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isIncome: false },
   "00000000-0000-0000-0003-000000000002": { name: "Member Contribution - Ruben Ruiz", isIncome: true },
   "00000000-0000-0000-0003-000000000003": { name: "Internal Transfer", isIncome: false },
@@ -304,17 +317,73 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'service charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'late fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'late payment fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
-  { pattern: 'purchase interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
-  { pattern: 'interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'purchase interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000040', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'interest charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000040', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'annual fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
 
   // ============================
-  // INSURANCE (0002-08) — Schedule C Line 15
+  // INSURANCE - AUTO (0002-39) — Schedule C Line 15
   // ============================
-  { pattern: 'geico', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
-  { pattern: 'state farm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
-  { pattern: 'progressive', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.80 },
-  { pattern: 'allstate', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'geico', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'state farm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'progressive', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'allstate', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'farmers insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'auto insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'car insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000039', is_personal: false, is_transfer: false, confidence: 0.95 },
+
+  // ============================
+  // INSURANCE - BUSINESS (0002-08) — Schedule C Line 15
+  // ============================
+  { pattern: 'business insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'liability insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'e&o insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000008', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================
+  // HEALTH INSURANCE (0002-36) — Schedule 1 Line 17 (above-the-line deduction)
+  // ============================
+  { pattern: 'health insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'covered california', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'blue shield', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'blue cross', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'kaiser', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'anthem', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'aetna', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'united health', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'cigna', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'oscar health', match: 'contains', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================
+  // INTEREST EXPENSE (0002-40) — Schedule C Line 16b
+  // ============================
+  { pattern: 'interest charge on purchases', match: 'contains', category_id: '00000000-0000-0000-0002-000000000040', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'finance charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000040', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'interest charged', match: 'contains', category_id: '00000000-0000-0000-0002-000000000040', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================
+  // LICENSE & FEE (0002-41) — Schedule C Line 27a
+  // ============================
+  { pattern: 'business license', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'sos.ca.gov', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'secretary of state', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'franchise tax board', match: 'contains', category_id: '00000000-0000-0000-0002-000000000048', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'ftb payment', match: 'contains', category_id: '00000000-0000-0000-0002-000000000048', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'ca ftb', match: 'contains', category_id: '00000000-0000-0000-0002-000000000048', is_personal: false, is_transfer: false, confidence: 0.95 },
+
+  // ============================
+  // POSTAGE & SHIPPING (0002-44) — Schedule C Line 27a
+  // ============================
+  { pattern: 'usps', match: 'contains', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'ups store', match: 'contains', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'fedex', match: 'contains', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'stamps.com', match: 'contains', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'pirate ship', match: 'contains', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================
+  // EQUIPMENT (0002-45) — Schedule C Line 13 (or Section 179)
+  // ============================
+  { pattern: 'equipment purchase', match: 'contains', category_id: '00000000-0000-0000-0002-000000000045', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'b&h photo', match: 'contains', category_id: '00000000-0000-0000-0002-000000000045', is_personal: false, is_transfer: false, confidence: 0.85 },
 
   // ============================
   // MERCHANT PROCESSING FEES (0002-05) — Schedule C Line 10
