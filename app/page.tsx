@@ -247,6 +247,10 @@ export default function CaliforniaBusinessAccounting() {
     // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
     const newTransactions = currentBusiness.transactions.map(t => {
+      const dlDebug = t.description.toLowerCase()
+      const isGHL = dlDebug.includes("highlevel") || dlDebug.includes("gohighle") || dlDebug.includes("ghl")
+      if (isGHL) console.log("[v0] GHL transaction found:", t.description, "| current category:", t.category, "| forceAll:", forceAll)
+
       // Skip user-categorized transactions unless forceAll (don't override manual edits)
       if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
         // But DO check if Upwork income is miscategorized
@@ -255,6 +259,7 @@ export default function CaliforniaBusinessAccounting() {
           updated++
           return { ...t, category: "Freelance Income", isIncome: true }
         }
+        if (isGHL) console.log("[v0] GHL SKIPPED (already categorized as:", t.category, ")")
         return t
       }
 
@@ -269,6 +274,7 @@ export default function CaliforniaBusinessAccounting() {
         if (matched) {
           const catInfo = CATEGORY_ID_TO_NAME[rule.category_id]
           if (catInfo) {
+            if (isGHL) console.log("[v0] GHL MATCHED rule:", rule.pattern, "-> category:", catInfo.name)
             updated++
             return {
               ...t,
@@ -324,6 +330,12 @@ export default function CaliforniaBusinessAccounting() {
 
       return t
     })
+
+    // Debug: show Software & Web Hosting total
+    const softwareTotal = newTransactions
+      .filter(t => t.category === "Software & Web Hosting Expense")
+      .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0)
+    console.log("[v0] Software & Web Hosting total after recategorize:", softwareTotal.toFixed(2), "| transactions:", newTransactions.filter(t => t.category === "Software & Web Hosting Expense").length)
 
     updateCurrentBusiness({ transactions: newTransactions })
     toast({

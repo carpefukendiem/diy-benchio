@@ -137,6 +137,23 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'anthropic', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'microsoft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
   { pattern: 'mailchimp', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'mailgun', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'sinch mailgun', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'sinch', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'leadconnector', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'lead connector', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'lc phone', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'screaming frog', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'grammarly', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'notion', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'vercel', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'heroku', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'digitalocean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'github', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'highlevel agency', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'highlevel inc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'gohighlevel.c', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'gohighle', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.95 },
 
   // ============================
   // ADVERTISING & MARKETING (0002-01) — Schedule C Line 8
@@ -313,6 +330,8 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   { pattern: 'monthly service fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'overdraft protection', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'overdraft fee for a transaction', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'overdraft fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.98 },
   { pattern: 'overdraft', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'service charge', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'late fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -775,19 +794,30 @@ export function categorizeByRules(
       }
     }
     
-    // Check built-in rules
+    // Check built-in rules — pick BEST match using a scoring system:
+    // Score = (confidence * 100) + pattern_length
+    // This means a high-confidence specific vendor match (e.g. "highlevel inc" @ 0.98 = 111)
+    // always beats a low-confidence generic pattern (e.g. "recurring payment" @ 0.50 = 67).
+    // When confidence is similar, longer (more specific) patterns win as tiebreaker.
+    let bestMatch: { rule: typeof BUILT_IN_RULES[0]; score: number } | null = null;
     for (const rule of BUILT_IN_RULES) {
       if (matchesRule(descLower, rule.pattern, rule.match)) {
-        return {
-          ...tx,
-          category_id: rule.category_id,
-          schedule_c_line: null,
-          is_personal: rule.is_personal,
-          is_transfer: rule.is_transfer,
-          confidence: rule.confidence,
-          categorized_by: 'rule' as const,
-        };
+        const score = (rule.confidence * 100) + rule.pattern.length;
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { rule, score };
+        }
       }
+    }
+    if (bestMatch) {
+      return {
+        ...tx,
+        category_id: bestMatch.rule.category_id,
+        schedule_c_line: null,
+        is_personal: bestMatch.rule.is_personal,
+        is_transfer: bestMatch.rule.is_transfer,
+        confidence: bestMatch.rule.confidence,
+        categorized_by: 'rule' as const,
+      };
     }
     
     // Smart fallback — try keyword heuristics before giving up
