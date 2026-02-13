@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { EthereumFix } from "@/components/ethereum-fix"
 import { BusinessSelector } from "@/components/business-selector"
 import { SaveIndicator } from "@/components/save-indicator"
@@ -56,7 +57,7 @@ interface Transaction {
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal"
   month: string
   year: string
   fileName: string
@@ -220,7 +221,17 @@ export default function CaliforniaBusinessAccounting() {
   }, [currentBusinessId])
 
   const handleStatementsUpdate = useCallback((statements: UploadedStatement[]) => {
-    const allTransactions = statements.flatMap((statement) => statement.transactions)
+    // Auto-tag transactions from personal accounts as "Personal Expense"
+    const allTransactions = statements.flatMap((statement) => {
+      if (statement.accountType === "personal") {
+        return statement.transactions.map(t => ({
+          ...t,
+          category: t.category && t.category !== "Uncategorized Expense" ? t.category : "Personal Expense",
+          isIncome: false,
+        }))
+      }
+      return statement.transactions
+    })
     updateCurrentBusiness({
       uploadedStatements: statements,
       transactions: allTransactions,
@@ -243,9 +254,25 @@ export default function CaliforniaBusinessAccounting() {
       return
     }
 
+    // Build set of personal account names for fast lookup
+    const personalAccountNames = new Set(
+      (currentBusiness.uploadedStatements || [])
+        .filter(s => s.accountType === "personal")
+        .map(s => s.accountName)
+    )
+
     // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
     const newTransactions = currentBusiness.transactions.map(t => {
+      // Never recategorize personal account transactions into business categories
+      if (personalAccountNames.has(t.account)) {
+        if (t.category !== "Personal Expense") {
+          updated++
+          return { ...t, category: "Personal Expense", isIncome: false }
+        }
+        return t
+      }
+
       // Skip user-categorized transactions unless forceAll (don't override manual edits)
       if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
         // But DO check if Upwork income is miscategorized
@@ -258,6 +285,12 @@ export default function CaliforniaBusinessAccounting() {
       }
 
       const dl = t.description.toLowerCase()
+      
+      // Priority overrides: these patterns ALWAYS win regardless of vendor name in description
+      if (dl.includes("overdraft fee")) {
+        updated++
+        return { ...t, category: "Bank & ATM Fee Expense", isIncome: false }
+      }
       
       // Try all built-in rules from the rules engine
       for (const rule of BUILT_IN_RULES) {
@@ -433,6 +466,7 @@ export default function CaliforniaBusinessAccounting() {
     })
 
     const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
+
     // Apply 50% meals deduction rule per IRS
     const schedCDeductions = businessExpenses.reduce((sum, t) => {
       const cl = (t.category || "").toLowerCase()
@@ -634,12 +668,32 @@ export default function CaliforniaBusinessAccounting() {
                 )}
               </div>
               <div className="flex gap-2 items-center">
-                <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(false)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
-                  <Sparkles className="h-3.5 w-3.5" /> Re-categorize
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0} title="Re-run all rules on every transaction, overriding previous categorizations">
-                  <RefreshCw className="h-3.5 w-3.5" /> Force All
-                </Button>
+<TooltipProvider delayDuration={300}>
+<Tooltip>
+<TooltipTrigger asChild>
+<Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(false)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+<Sparkles className="h-3.5 w-3.5" /> Re-categorize
+</Button>
+</TooltipTrigger>
+<TooltipContent side="bottom" className="max-w-[240px] text-center">
+<p className="font-medium">Smart Re-categorize</p>
+<p className="text-xs text-muted-foreground mt-0.5">Only categorizes uncategorized transactions. Your manual edits are preserved.</p>
+</TooltipContent>
+</Tooltip>
+</TooltipProvider>
+<TooltipProvider delayDuration={300}>
+<Tooltip>
+<TooltipTrigger asChild>
+<Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+<RefreshCw className="h-3.5 w-3.5" /> Force All
+</Button>
+</TooltipTrigger>
+<TooltipContent side="bottom" className="max-w-[240px] text-center">
+<p className="font-medium">Force Re-categorize All</p>
+<p className="text-xs text-muted-foreground mt-0.5">Overwrites every transaction, including your manual edits. Use after adding new rules.</p>
+</TooltipContent>
+</Tooltip>
+</TooltipProvider>
                 <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
                   businesses={businessSelectorData}
