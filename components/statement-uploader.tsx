@@ -17,7 +17,7 @@ import { TransactionReview } from "@/components/transaction-review"
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal"
   month: string
   year: string
   fileName: string
@@ -48,7 +48,7 @@ const MONTHS = [
 
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
-  const [accountType, setAccountType] = useState<"bank" | "credit_card">("bank")
+  const [accountType, setAccountType] = useState<"bank" | "credit_card" | "personal">("bank")
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
@@ -410,10 +410,16 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                 <Select value={accountType} onValueChange={(v) => setAccountType(v as any)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank">Bank Account</SelectItem>
-                    <SelectItem value="credit_card">Credit Card</SelectItem>
+                    <SelectItem value="bank">Business Bank Account</SelectItem>
+                    <SelectItem value="credit_card">Business Credit Card</SelectItem>
+                    <SelectItem value="personal">Personal Account (excluded from business taxes)</SelectItem>
                   </SelectContent>
                 </Select>
+                {accountType === "personal" && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    All transactions from this account will be auto-categorized as personal and excluded from your Schedule C / Income Statement.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -514,6 +520,9 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                 <div className="flex items-center gap-2">
                   <h3 className="font-semibold">{acctName}</h3>
                   <Badge>{statements.length} months</Badge>
+                  {statements[0]?.accountType === "personal" && (
+                    <Badge variant="secondary" className="text-xs">Personal -- excluded from taxes</Badge>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {statements.map((s) => (

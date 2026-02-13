@@ -57,7 +57,7 @@ interface Transaction {
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal"
   month: string
   year: string
   fileName: string
@@ -221,7 +221,17 @@ export default function CaliforniaBusinessAccounting() {
   }, [currentBusinessId])
 
   const handleStatementsUpdate = useCallback((statements: UploadedStatement[]) => {
-    const allTransactions = statements.flatMap((statement) => statement.transactions)
+    // Auto-tag transactions from personal accounts as "Personal Expense"
+    const allTransactions = statements.flatMap((statement) => {
+      if (statement.accountType === "personal") {
+        return statement.transactions.map(t => ({
+          ...t,
+          category: t.category && t.category !== "Uncategorized Expense" ? t.category : "Personal Expense",
+          isIncome: false,
+        }))
+      }
+      return statement.transactions
+    })
     updateCurrentBusiness({
       uploadedStatements: statements,
       transactions: allTransactions,
@@ -244,12 +254,24 @@ export default function CaliforniaBusinessAccounting() {
       return
     }
 
+    // Build set of personal account names for fast lookup
+    const personalAccountNames = new Set(
+      (currentBusiness.uploadedStatements || [])
+        .filter(s => s.accountType === "personal")
+        .map(s => s.accountName)
+    )
+
     // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
     const newTransactions = currentBusiness.transactions.map(t => {
-      const dlDebug = t.description.toLowerCase()
-      const isGHL = dlDebug.includes("highlevel") || dlDebug.includes("gohighle") || dlDebug.includes("ghl")
-      if (isGHL) console.log("[v0] GHL transaction found:", t.description, "| current category:", t.category, "| forceAll:", forceAll)
+      // Never recategorize personal account transactions into business categories
+      if (personalAccountNames.has(t.account)) {
+        if (t.category !== "Personal Expense") {
+          updated++
+          return { ...t, category: "Personal Expense", isIncome: false }
+        }
+        return t
+      }
 
       // Skip user-categorized transactions unless forceAll (don't override manual edits)
       if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
@@ -259,11 +281,16 @@ export default function CaliforniaBusinessAccounting() {
           updated++
           return { ...t, category: "Freelance Income", isIncome: true }
         }
-        if (isGHL) console.log("[v0] GHL SKIPPED (already categorized as:", t.category, ")")
         return t
       }
 
       const dl = t.description.toLowerCase()
+      
+      // Priority overrides: these patterns ALWAYS win regardless of vendor name in description
+      if (dl.includes("overdraft fee")) {
+        updated++
+        return { ...t, category: "Bank & ATM Fee Expense", isIncome: false }
+      }
       
       // Try all built-in rules from the rules engine
       for (const rule of BUILT_IN_RULES) {
@@ -274,7 +301,6 @@ export default function CaliforniaBusinessAccounting() {
         if (matched) {
           const catInfo = CATEGORY_ID_TO_NAME[rule.category_id]
           if (catInfo) {
-            if (isGHL) console.log("[v0] GHL MATCHED rule:", rule.pattern, "-> category:", catInfo.name)
             updated++
             return {
               ...t,
@@ -330,12 +356,6 @@ export default function CaliforniaBusinessAccounting() {
 
       return t
     })
-
-    // Debug: show Software & Web Hosting total
-    const softwareTotal = newTransactions
-      .filter(t => t.category === "Software & Web Hosting Expense")
-      .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0)
-    console.log("[v0] Software & Web Hosting total after recategorize:", softwareTotal.toFixed(2), "| transactions:", newTransactions.filter(t => t.category === "Software & Web Hosting Expense").length)
 
     updateCurrentBusiness({ transactions: newTransactions })
     toast({
@@ -446,18 +466,6 @@ export default function CaliforniaBusinessAccounting() {
     })
 
     const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
-
-    // Debug: log expense breakdown by category
-    const expenseByCat: Record<string, { total: number; count: number }> = {}
-    businessExpenses.forEach(t => {
-      const cat = t.category || "unknown"
-      if (!expenseByCat[cat]) expenseByCat[cat] = { total: 0, count: 0 }
-      expenseByCat[cat].total += t.amount
-      expenseByCat[cat].count++
-    })
-    console.log("[v0] DASHBOARD expense breakdown:", JSON.stringify(expenseByCat, null, 2))
-    console.log("[v0] DASHBOARD totalExpenses:", totalExpenses, "| totalRevenue:", totalRevenue, "| healthIns:", healthInsuranceTotal, "| sepIRA:", sepIraTotal)
-    console.log("[v0] DASHBOARD total transactions:", currentBusiness.transactions.length, "| business expenses:", businessExpenses.length)
 
     // Apply 50% meals deduction rule per IRS
     const schedCDeductions = businessExpenses.reduce((sum, t) => {
