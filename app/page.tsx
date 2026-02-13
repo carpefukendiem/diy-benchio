@@ -97,7 +97,7 @@ function debouncedSave(key: string, value: any, delay = 500) {
 export default function CaliforniaBusinessAccounting() {
   const [businesses, setBusinesses] = useState<BusinessData[]>([])
   const [currentBusinessId, setCurrentBusinessId] = useState<string>("")
-  const [showWizard, setShowWizard] = useState(true)
+  const [showWizard, setShowWizard] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
   const { toast } = useToast()
@@ -108,21 +108,29 @@ export default function CaliforniaBusinessAccounting() {
     [businesses, currentBusinessId]
   )
 
-  // Load from localStorage once on mount
+  // Load from localStorage once on mount — skip wizard if any data exists
   useEffect(() => {
     try {
       const saved = localStorage.getItem("businesses")
       if (saved) {
         const parsed = JSON.parse(saved)
-        setBusinesses(parsed)
         if (parsed.length > 0) {
+          setBusinesses(parsed)
           const lastId = localStorage.getItem("lastBusinessId")
           setCurrentBusinessId(lastId || parsed[0].id)
+          // Data found — go straight to dashboard
           setShowWizard(false)
+        } else {
+          // Empty array in storage — show wizard for first-time setup
+          setShowWizard(true)
         }
+      } else {
+        // Nothing saved at all — show wizard
+        setShowWizard(true)
       }
     } catch (e) {
       console.warn("Failed to load saved data:", e)
+      setShowWizard(true)
     }
     setIsHydrated(true)
   }, [])
@@ -506,17 +514,53 @@ export default function CaliforniaBusinessAccounting() {
   }
 
   if (showWizard) {
+    // Quick-start: create a default business profile so user can skip the wizard
+    const handleSkipWizard = () => {
+      if (businesses.length > 0) {
+        // Already have data, just go to dashboard
+        setShowWizard(false)
+        return
+      }
+      const defaultBusiness: BusinessData = {
+        id: Date.now().toString(),
+        profile: {
+          businessName: "My Business",
+          businessType: "service",
+          entityType: "sole_proprietor",
+          taxYear: "2025",
+          state: "CA",
+          deductions: ["vehicle", "meals", "office", "software", "phone-internet", "advertising", "professional", "bank-fees", "utilities", "home-office"],
+        },
+        uploadedStatements: [],
+        transactions: [],
+        receipts: [],
+        lastSync: new Date().toISOString(),
+      }
+      setBusinesses([defaultBusiness])
+      setCurrentBusinessId(defaultBusiness.id)
+      setShowWizard(false)
+      toast({
+        title: "Quick start",
+        description: "Default profile created. You can update your business details anytime from Settings.",
+      })
+    }
+
     return (
       <>
         <EthereumFix />
         <div className="min-h-screen bg-background">
-          {businesses.length > 0 && (
-            <div className="container mx-auto px-4 py-4">
+          <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+            {businesses.length > 0 ? (
               <Button variant="ghost" onClick={() => setShowWizard(false)}>
-                ← Back to Dashboard
+                {"<-"} Back to Dashboard
               </Button>
-            </div>
-          )}
+            ) : (
+              <div />
+            )}
+            <Button variant="outline" size="sm" onClick={handleSkipWizard}>
+              {businesses.length > 0 ? "Back to Dashboard" : "Skip Setup -- Go to Dashboard"}
+            </Button>
+          </div>
           <Suspense fallback={<TabLoading />}>
             <TaxWizard onComplete={handleWizardComplete} />
           </Suspense>
