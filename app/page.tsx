@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { EthereumFix } from "@/components/ethereum-fix"
 import { BusinessSelector } from "@/components/business-selector"
 import { SaveIndicator } from "@/components/save-indicator"
@@ -634,12 +635,32 @@ export default function CaliforniaBusinessAccounting() {
                 )}
               </div>
               <div className="flex gap-2 items-center">
-                <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(false)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
-                  <Sparkles className="h-3.5 w-3.5" /> Re-categorize
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0} title="Re-run all rules on every transaction, overriding previous categorizations">
-                  <RefreshCw className="h-3.5 w-3.5" /> Force All
-                </Button>
+<TooltipProvider delayDuration={300}>
+<Tooltip>
+<TooltipTrigger asChild>
+<Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(false)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+<Sparkles className="h-3.5 w-3.5" /> Re-categorize
+</Button>
+</TooltipTrigger>
+<TooltipContent side="bottom" className="max-w-[240px] text-center">
+<p className="font-medium">Smart Re-categorize</p>
+<p className="text-xs text-muted-foreground mt-0.5">Only categorizes uncategorized transactions. Your manual edits are preserved.</p>
+</TooltipContent>
+</Tooltip>
+</TooltipProvider>
+<TooltipProvider delayDuration={300}>
+<Tooltip>
+<TooltipTrigger asChild>
+<Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0}>
+<RefreshCw className="h-3.5 w-3.5" /> Force All
+</Button>
+</TooltipTrigger>
+<TooltipContent side="bottom" className="max-w-[240px] text-center">
+<p className="font-medium">Force Re-categorize All</p>
+<p className="text-xs text-muted-foreground mt-0.5">Overwrites every transaction, including your manual edits. Use after adding new rules.</p>
+</TooltipContent>
+</Tooltip>
+</TooltipProvider>
                 <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
                   businesses={businessSelectorData}
