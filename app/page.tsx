@@ -446,6 +446,19 @@ export default function CaliforniaBusinessAccounting() {
     })
 
     const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
+
+    // Debug: log expense breakdown by category
+    const expenseByCat: Record<string, { total: number; count: number }> = {}
+    businessExpenses.forEach(t => {
+      const cat = t.category || "unknown"
+      if (!expenseByCat[cat]) expenseByCat[cat] = { total: 0, count: 0 }
+      expenseByCat[cat].total += t.amount
+      expenseByCat[cat].count++
+    })
+    console.log("[v0] DASHBOARD expense breakdown:", JSON.stringify(expenseByCat, null, 2))
+    console.log("[v0] DASHBOARD totalExpenses:", totalExpenses, "| totalRevenue:", totalRevenue, "| healthIns:", healthInsuranceTotal, "| sepIRA:", sepIraTotal)
+    console.log("[v0] DASHBOARD total transactions:", currentBusiness.transactions.length, "| business expenses:", businessExpenses.length)
+
     // Apply 50% meals deduction rule per IRS
     const schedCDeductions = businessExpenses.reduce((sum, t) => {
       const cl = (t.category || "").toLowerCase()
