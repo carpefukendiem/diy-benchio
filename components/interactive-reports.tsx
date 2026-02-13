@@ -137,6 +137,21 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     }
   }, [categoryTotals])
 
+  // Debug: trace Software & Web Hosting category
+  const swh = categoryTotals["Software & Web Hosting Expense"]
+  if (swh) {
+    console.log("[v0] Software & Web Hosting in categoryTotals:", swh.amount.toFixed(2), "| txns:", swh.transactions.length, "| isIncome:", swh.isIncome)
+    const negTxns = swh.transactions.filter(t => t.amount < 0)
+    if (negTxns.length > 0) console.log("[v0] Software negative amount txns:", negTxns.length, negTxns.map(t => `${t.description}: ${t.amount}`))
+  } else {
+    console.log("[v0] 'Software & Web Hosting Expense' NOT FOUND in categoryTotals. Keys:", Object.keys(categoryTotals).filter(k => k.toLowerCase().includes("soft")))
+  }
+  // Check which section it landed in
+  const inExpense = expenseItems.find(([k]) => k.includes("Software"))
+  const inRevenue = revenueItems.find(([k]) => k.includes("Software"))
+  const inTransfer = transferItems.find(([k]) => k.includes("Software"))
+  console.log("[v0] Software in expense?", !!inExpense, "| in revenue?", !!inRevenue, "| in transfer?", !!inTransfer)
+
   // bench.io-style P&L calculations
   const totalRevenueSales = revenueItems.reduce((s, [, d]) => s + d.amount, 0)
   const totalReturns = returnsItems.reduce((s, [, d]) => s + d.amount, 0)
