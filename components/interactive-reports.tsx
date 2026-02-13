@@ -92,43 +92,68 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     return totals
   }, [transactions])
 
-  // Separate income, business expenses, personal, transfers
-  const { incomeItems, expenseItems, personalItems, transferItems, uncategorizedItems } = useMemo(() => {
-    const income: [string, typeof categoryTotals[string]][] = []
+  // Separate into bench.io-style sections: Revenue, COGS, Operating Expenses, Above-the-line, Personal, Transfers
+  const { revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems } = useMemo(() => {
+    const revenue: [string, typeof categoryTotals[string]][] = []
+    const returns: [string, typeof categoryTotals[string]][] = []
+    const cogs: [string, typeof categoryTotals[string]][] = []
     const expense: [string, typeof categoryTotals[string]][] = []
+    const aboveLine: [string, typeof categoryTotals[string]][] = []
     const personal: [string, typeof categoryTotals[string]][] = []
     const transfer: [string, typeof categoryTotals[string]][] = []
     const uncategorized: [string, typeof categoryTotals[string]][] = []
+    const nondeductible: [string, typeof categoryTotals[string]][] = []
 
     const personalKeywords = ["personal", "crypto"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
+    const cogsKeywords = ["cost of service", "cost of goods"]
+    const aboveLineKeywords = ["health insurance", "sep-ira"]
+    const nondeductibleKeywords = ["nondeductible"]
+    const returnsKeywords = ["returns & allowances", "refunds given"]
 
     Object.entries(categoryTotals).forEach(([cat, data]) => {
       const cl = cat.toLowerCase()
-      if (cl.includes("uncategorized")) { uncategorized.push([cat, data]); return }
-      if (data.isIncome || cl.includes("revenue") || cl.includes("income") || cl.includes("refund")) { income.push([cat, data]); return }
+      if (cl.includes("uncategorized") || cl.includes("awaiting category")) { uncategorized.push([cat, data]); return }
+      if (nondeductibleKeywords.some(k => cl.includes(k))) { nondeductible.push([cat, data]); return }
+      if (returnsKeywords.some(k => cl.includes(k))) { returns.push([cat, data]); return }
+      if (data.isIncome || cl.includes("revenue") || cl.includes("income")) { revenue.push([cat, data]); return }
       if (transferKeywords.some(k => cl.includes(k))) { transfer.push([cat, data]); return }
       if (personalKeywords.some(k => cl.includes(k))) { personal.push([cat, data]); return }
+      if (cogsKeywords.some(k => cl.includes(k))) { cogs.push([cat, data]); return }
+      if (aboveLineKeywords.some(k => cl.includes(k))) { aboveLine.push([cat, data]); return }
       expense.push([cat, data])
     })
 
     return {
-      incomeItems: income.sort((a, b) => b[1].amount - a[1].amount),
+      revenueItems: revenue.sort((a, b) => b[1].amount - a[1].amount),
+      returnsItems: returns,
+      cogsItems: cogs.sort((a, b) => b[1].amount - a[1].amount),
       expenseItems: expense.sort((a, b) => b[1].amount - a[1].amount),
+      aboveTheLineItems: aboveLine.sort((a, b) => b[1].amount - a[1].amount),
       personalItems: personal.sort((a, b) => b[1].amount - a[1].amount),
       transferItems: transfer.sort((a, b) => b[1].amount - a[1].amount),
       uncategorizedItems: uncategorized,
+      nondeductibleItems: nondeductible,
     }
   }, [categoryTotals])
 
-  const totalRevenue = incomeItems.reduce((s, [, d]) => s + d.amount, 0)
-  const totalExpenses = expenseItems.reduce((s, [, d]) => s + d.amount, 0)
+  // bench.io-style P&L calculations
+  const totalRevenueSales = revenueItems.reduce((s, [, d]) => s + d.amount, 0)
+  const totalReturns = returnsItems.reduce((s, [, d]) => s + d.amount, 0)
+  const totalRevenue = totalRevenueSales - totalReturns
+  const totalCOGS = cogsItems.reduce((s, [, d]) => s + d.amount, 0)
+  const grossProfit = totalRevenue - totalCOGS
+  const totalOperatingExpenses = expenseItems.reduce((s, [, d]) => s + d.amount, 0)
+  const totalAboveTheLine = aboveTheLineItems.reduce((s, [, d]) => s + d.amount, 0)
+  const totalExpenses = totalCOGS + totalOperatingExpenses
   // Calculate actual deductible amount (meals at 50%)
   const totalDeductible = expenseItems.reduce((s, [cat, d]) => {
     const pct = SCHEDULE_C_LINES[cat]?.deductPct
     return s + (pct ? d.amount * (pct / 100) : d.amount)
-  }, 0)
-  const netIncome = totalRevenue - totalDeductible
+  }, 0) + totalCOGS
+  const netIncome = totalRevenue - totalExpenses
+  // For backward compat in existing exports
+  const incomeItems = revenueItems
 
   // Monthly trends data
   const monthlyData = useMemo(() => {
@@ -211,9 +236,13 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     })
 
     summaryRows.push([""])
-    summaryRows.push(["TOTAL REVENUE", "", totalRevenue.toFixed(2), "", ""])
-    summaryRows.push(["TOTAL EXPENSES", "", totalExpenses.toFixed(2), totalDeductible.toFixed(2), ""])
-    summaryRows.push(["NET INCOME", "", netIncome.toFixed(2), "", ""])
+    summaryRows.push(["TOTAL REVENUES", "", totalRevenue.toFixed(2), "", ""])
+    if (totalCOGS > 0) summaryRows.push(["TOTAL COST OF SALES", "", totalCOGS.toFixed(2), "", ""])
+    summaryRows.push(["GROSS PROFIT", "", grossProfit.toFixed(2), "", ""])
+    summaryRows.push(["TOTAL OPERATING EXPENSES", "", totalOperatingExpenses.toFixed(2), totalDeductible.toFixed(2), ""])
+    if (totalAboveTheLine > 0) summaryRows.push(["ABOVE-THE-LINE DEDUCTIONS", "", totalAboveTheLine.toFixed(2), "", ""])
+    summaryRows.push(["TOTAL EXPENSES", "", (totalExpenses + totalAboveTheLine).toFixed(2), "", ""])
+    summaryRows.push(["NET PROFIT", "", netIncome.toFixed(2), "", ""])
 
     // Transaction detail sheet
     const txRows = [
@@ -241,76 +270,131 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     a.click()
     URL.revokeObjectURL(url)
     toast({ title: "Exported for Google Sheets", description: "Open Google Sheets → File → Import → Upload the .tsv file" })
-  }, [expenseItems, totalRevenue, totalExpenses, totalDeductible, netIncome, transactions, dateRange, toast])
+  }, [expenseItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, netIncome, transactions, dateRange, toast])
 
-  // Client-side PDF via HTML print
+  // Client-side PDF — bench.io Income Statement format
   const exportPDF = useCallback(() => {
+    const fmtAmt = (n: number) => {
+      const abs = Math.abs(n)
+      const str = abs.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return n < 0 ? `-${str}` : str
+    }
+    const year = dateRange.start.slice(0, 4)
+
     const printContent = `
 <!DOCTYPE html><html><head><style>
-body{font-family:Arial,sans-serif;margin:40px;font-size:11px;color:#333}
-h1{font-size:18px;border-bottom:2px solid #333;padding-bottom:8px}
-h2{font-size:14px;margin-top:20px;color:#555}
-table{width:100%;border-collapse:collapse;margin:10px 0}
-th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #ddd}
-th{background:#f5f5f5;font-weight:bold}
-.amount{text-align:right;font-family:monospace}
-.total{font-weight:bold;border-top:2px solid #333}
-.section{margin-bottom:20px}
-.green{color:#16a34a}.red{color:#dc2626}
+@page { margin: 0.6in 0.75in; size: letter; }
+body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 40px 50px; font-size: 10.5px; color: #1a1a1a; line-height: 1.5; }
+.header { text-align: center; margin-bottom: 24px; }
+.header h1 { font-size: 20px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.3px; }
+.header h2 { font-size: 13px; font-weight: 400; color: #555; margin: 0 0 4px; }
+.header .period { font-size: 11px; color: #888; }
+.header .year-label { display: inline-block; background: #f0f0f0; border-radius: 3px; padding: 2px 10px; font-size: 10px; font-weight: 600; color: #555; margin-top: 6px; }
+table { width: 100%; border-collapse: collapse; margin: 0; }
+td, th { padding: 4px 0; vertical-align: top; }
+.cat-name { padding-left: 16px; }
+.section-header td { font-weight: 700; font-size: 11px; padding-top: 14px; padding-bottom: 4px; border-bottom: 1px solid #ccc; }
+.subtotal td { font-weight: 600; padding-top: 6px; border-top: 1px solid #ddd; }
+.grand-total td { font-weight: 700; font-size: 11.5px; padding-top: 8px; border-top: 2px solid #333; }
+.amt { text-align: right; font-variant-numeric: tabular-nums; font-family: 'Courier New', monospace; font-size: 10.5px; white-space: nowrap; }
+.light { color: #888; }
+.section-gap td { padding: 4px 0; }
+.footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 8.5px; color: #aaa; text-align: center; }
+.sched-c { margin-top: 24px; padding: 12px 16px; background: #f7f9fc; border: 1px solid #e0e4ea; border-radius: 4px; }
+.sched-c h3 { font-size: 12px; margin: 0 0 8px; font-weight: 700; }
+.sched-c table td { padding: 3px 0; font-size: 10px; }
+.sched-c .label { color: #555; }
+.sched-c .val { font-weight: 600; }
 </style></head><body>
-<h1>SCHEDULE C — PROFIT OR LOSS FROM BUSINESS</h1>
-<p><strong>Taxpayer:</strong> Ruben Ruiz &nbsp; <strong>Tax Year:</strong> ${dateRange.start.slice(0, 4)} &nbsp; <strong>Generated:</strong> ${new Date().toLocaleDateString()}</p>
 
-<div class="section">
-<h2>GROSS INCOME (Lines 1-7)</h2>
-<table><tr><th>Category</th><th>Schedule C Line</th><th class="amount">Amount</th><th>Transactions</th></tr>
-${incomeItems.map(([cat, data]) => {
-  const sc = SCHEDULE_C_LINES[cat]
-  return `<tr><td>${cat}</td><td>${sc ? `Line ${sc.line} — ${sc.label}` : ""}</td><td class="amount green">$${data.amount.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td>${data.transactions.length}</td></tr>`
-}).join("")}
-<tr class="total"><td>Total Gross Income</td><td></td><td class="amount green">$${totalRevenue.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td></td></tr>
-</table></div>
-
-<div class="section">
-<h2>BUSINESS EXPENSES (Lines 8-27)</h2>
-<table><tr><th>Category</th><th>Schedule C Line</th><th class="amount">Amount</th><th class="amount">Deductible</th><th>Transactions</th></tr>
-${expenseItems.map(([cat, data]) => {
-  const sc = SCHEDULE_C_LINES[cat]
-  const deductible = sc?.deductPct ? data.amount * (sc.deductPct / 100) : data.amount
-  return `<tr><td>${cat}</td><td>${sc ? `Line ${sc.line} — ${sc.label}` : ""}</td><td class="amount">$${data.amount.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td class="amount">$${deductible.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td>${data.transactions.length}</td></tr>`
-}).join("")}
-<tr class="total"><td>Total Expenses</td><td></td><td class="amount red">$${totalExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td class="amount red">$${totalDeductible.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td></td></tr>
-</table></div>
-
-<div class="section" style="background:#f0f9ff;padding:12px;border-radius:4px">
-<h2 style="margin-top:0">NET PROFIT (Line 31)</h2>
-<table><tr class="total"><td>Net Profit (Loss)</td><td></td><td class="amount ${netIncome >= 0 ? "green" : "red"}">$${netIncome.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td></td></tr></table>
+<div class="header">
+<h1>Ranking SB</h1>
+<h2>Annual Income Statement</h2>
+<div class="period">For the period ${year}</div>
+<div class="year-label">Year ${year}</div>
 </div>
 
-${personalItems.length > 0 ? `<div class="section"><h2>NON-DEDUCTIBLE (Personal / Not on Schedule C)</h2><table>
-${personalItems.map(([cat, data]) => `<tr><td>${cat}</td><td class="amount">$${data.amount.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td>${data.transactions.length} txns</td></tr>`).join("")}
-</table></div>` : ""}
+<table>
 
-${transferItems.length > 0 ? `<div class="section"><h2>TRANSFERS / OWNER DRAWS (Not on Schedule C)</h2><table>
-${transferItems.map(([cat, data]) => `<tr><td>${cat}</td><td class="amount">$${data.amount.toLocaleString("en", { minimumFractionDigits: 2 })}</td><td>${data.transactions.length} txns</td></tr>`).join("")}
-</table></div>` : ""}
+<!-- REVENUES -->
+<tr class="section-header"><td colspan="2">Revenues</td></tr>
+${revenueItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
+${returnsItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(-data.amount)}</td></tr>`).join("")}
+<tr class="subtotal"><td>Total Revenues</td><td class="amt">${fmtAmt(totalRevenue)}</td></tr>
 
-${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c7;padding:12px;border-radius:4px"><h2 style="margin-top:0;color:#92400e">⚠ UNCATEGORIZED (${uncategorizedItems.reduce((s, [, d]) => s + d.transactions.length, 0)} transactions — $${uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0).toFixed(2)})</h2>
-<p style="color:#92400e">These need to be categorized before filing.</p></div>` : ""}
+<!-- COST OF SALES -->
+${cogsItems.length > 0 ? `
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="section-header"><td colspan="2">Cost of Sales</td></tr>
+${cogsItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
+<tr class="subtotal"><td>Total Cost of Sales</td><td class="amt">${fmtAmt(totalCOGS)}</td></tr>
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="subtotal"><td><strong>Gross Profit</strong></td><td class="amt"><strong>${fmtAmt(grossProfit)}</strong></td></tr>
+` : `<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="subtotal"><td><strong>Gross Profit</strong></td><td class="amt"><strong>${fmtAmt(grossProfit)}</strong></td></tr>`}
 
-<p style="margin-top:30px;font-size:9px;color:#999">Generated by DIY Bench.io • This is not tax advice. Consult a CPA for final Schedule C preparation.</p>
+<!-- OPERATING EXPENSES -->
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="section-header"><td colspan="2">Operating Expenses</td></tr>
+${uncategorizedItems.length > 0 ? uncategorizedItems.map(([cat, data]) => `<tr><td class="cat-name">Awaiting Category - Expense</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("") : ""}
+${expenseItems.map(([cat, data]) => {
+    const sc = SCHEDULE_C_LINES[cat]
+    const label = cat === "Business Meals Expense" ? `${cat} <span class="light">(50% deductible)</span>` : cat
+    return `<tr><td class="cat-name">${label}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`
+  }).join("")}
+${nondeductibleItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
+<tr class="subtotal"><td>Total Operating Expenses</td><td class="amt">${fmtAmt(totalOperatingExpenses + uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0) + nondeductibleItems.reduce((s, [, d]) => s + d.amount, 0))}</td></tr>
+
+<!-- ABOVE-THE-LINE DEDUCTIONS (not on Schedule C) -->
+${aboveTheLineItems.length > 0 ? `
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="section-header"><td colspan="2">Above-the-Line Deductions (Schedule 1)</td></tr>
+${aboveTheLineItems.map(([cat, data]) => {
+    const sc = SCHEDULE_C_LINES[cat]
+    return `<tr><td class="cat-name">${cat} <span class="light">${sc ? `(${sc.label})` : ""}</span></td><td class="amt">${fmtAmt(data.amount)}</td></tr>`
+  }).join("")}
+<tr class="subtotal"><td>Total Above-the-Line</td><td class="amt">${fmtAmt(totalAboveTheLine)}</td></tr>
+` : ""}
+
+<!-- TOTAL EXPENSES -->
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="subtotal"><td>Total Expenses</td><td class="amt">${fmtAmt(totalExpenses + totalAboveTheLine + uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0) + nondeductibleItems.reduce((s, [, d]) => s + d.amount, 0))}</td></tr>
+
+<!-- NET PROFIT -->
+<tr class="section-gap"><td colspan="2"></td></tr>
+<tr class="grand-total"><td>Net Profit</td><td class="amt">${fmtAmt(netIncome)}</td></tr>
+</table>
+
+${personalItems.length > 0 || transferItems.length > 0 ? `
+<div class="sched-c" style="margin-top: 24px; background: #f9f9f9;">
+<h3>Non-Business Items (Not on Schedule C)</h3>
+<table>
+${personalItems.map(([cat, data]) => `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr>`).join("")}
+${transferItems.map(([cat, data]) => `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr>`).join("")}
+</table>
+</div>` : ""}
+
+${uncategorizedItems.length > 0 ? `
+<div class="sched-c" style="background: #fef9ee; border-color: #f0dca8;">
+<h3 style="color: #92400e;">Awaiting Category (${uncategorizedItems.reduce((s, [, d]) => s + d.transactions.length, 0)} transactions)</h3>
+<p style="font-size: 9px; color: #92400e; margin: 0;">$${uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0).toFixed(2)} needs to be categorized before filing.</p>
+</div>` : ""}
+
+<div class="footer">
+Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This is not tax advice. Consult a CPA for final Schedule C preparation.
+</div>
 </body></html>`
 
-    // Create downloadable HTML file (works on all browsers, no popup blocking)
+    // Create downloadable HTML file
     const blob = new Blob([printContent], { type: "text/html" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `Schedule-C-Report-${dateRange.start.slice(0, 4)}.html`
+    a.download = `Ranking-SB-Income-Statement-${year}.html`
     a.click()
     URL.revokeObjectURL(url)
 
-    // Also try opening for print (some browsers allow it)
+    // Also try opening for print
     try {
       const printWindow = window.open("", "_blank")
       if (printWindow) {
@@ -320,8 +404,8 @@ ${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c
       }
     } catch {}
 
-    toast({ title: "Report Downloaded", description: "Open the HTML file in your browser, then use File → Print → Save as PDF" })
-  }, [incomeItems, expenseItems, personalItems, transferItems, uncategorizedItems, totalRevenue, totalExpenses, totalDeductible, netIncome, dateRange, toast])
+    toast({ title: "Income Statement Downloaded", description: "Open the HTML file, then use File -> Print -> Save as PDF for a clean PDF." })
+  }, [revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, netIncome, dateRange, toast])
 
   // Render a category row with expandable transaction list
   const CategoryRow = ({ cat, data, showLine = true }: { cat: string; data: typeof categoryTotals[string]; showLine?: boolean }) => {
@@ -389,9 +473,9 @@ ${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold">Schedule C Tax Reports</h2>
+          <h2 className="text-2xl font-bold">Annual Income Statement</h2>
           <p className="text-muted-foreground text-sm">
-            Click any category to see transactions • {dateRange.start} to {dateRange.end}
+            Click any category to expand transactions -- {dateRange.start} to {dateRange.end}
           </p>
         </div>
         <div className="flex gap-2">
@@ -402,88 +486,136 @@ ${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c
             <FileSpreadsheet className="h-4 w-4 mr-1" /> Google Sheets
           </Button>
           <Button size="sm" onClick={exportPDF}>
-            <FileText className="h-4 w-4 mr-1" /> PDF
+            <FileText className="h-4 w-4 mr-1" /> Income Statement PDF
           </Button>
         </div>
       </div>
 
       <Tabs defaultValue="income-statement" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="income-statement">Schedule C</TabsTrigger>
+          <TabsTrigger value="income-statement">Income Statement</TabsTrigger>
           <TabsTrigger value="category-analysis">All Categories</TabsTrigger>
           <TabsTrigger value="monthly-trends">Monthly Trends</TabsTrigger>
         </TabsList>
 
-        {/* ======= SCHEDULE C INCOME STATEMENT ======= */}
+        {/* ======= INCOME STATEMENT (bench.io style) ======= */}
         <TabsContent value="income-statement">
           <div className="space-y-4">
-            {/* Revenue */}
+            {/* Revenues */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-green-600" />
-                  Gross Income (Lines 1-7)
-                </CardTitle>
+                <CardTitle className="text-base font-bold">Revenues</CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
-                {incomeItems.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-2">No income transactions</p>
+                {revenueItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-2">No revenue transactions</p>
                 ) : (
-                  incomeItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)
+                  revenueItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)
                 )}
+                {returnsItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
                 <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
-                  <span>Total Gross Income</span>
-                  <span className="text-green-600 font-mono">${totalRevenue.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  <span>Total Revenues</span>
+                  <span className="font-mono">${totalRevenue.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Expenses */}
+            {/* Cost of Sales */}
+            {cogsItems.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-bold">Cost of Sales</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {cogsItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
+                  <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
+                    <span>Total Cost of Sales</span>
+                    <span className="font-mono">${totalCOGS.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Gross Profit */}
+            <Card className="border-foreground/20">
+              <CardContent className="py-3">
+                <div className="flex justify-between font-bold px-3">
+                  <span>Gross Profit</span>
+                  <span className="font-mono">${grossProfit.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Operating Expenses */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <TrendingDown className="h-4 w-4 text-red-600" />
-                  Business Expenses (Lines 8-27)
-                </CardTitle>
+                <CardTitle className="text-base font-bold">Operating Expenses</CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
+                {uncategorizedItems.length > 0 && uncategorizedItems.map(([cat, data]) => (
+                  <CategoryRow key={cat} cat={`Awaiting Category - Expense`} data={data} showLine={false} />
+                ))}
                 {expenseItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-2">No categorized business expenses</p>
                 ) : (
                   expenseItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)
                 )}
+                {nondeductibleItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} showLine={false} />)}
                 <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
-                  <span>Total Expenses</span>
-                  <span className="text-red-600 font-mono">${totalExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  <span>Total Operating Expenses</span>
+                  <span className="font-mono">${(totalOperatingExpenses + uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0) + nondeductibleItems.reduce((s, [, d]) => s + d.amount, 0)).toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                 </div>
-                {totalDeductible !== totalExpenses && (
+                {totalDeductible !== totalOperatingExpenses && (
                   <div className="flex justify-between text-sm text-muted-foreground px-3 mt-1">
-                    <span>Total Deductible (after 50% meals adjustment)</span>
+                    <span>Deductible Total (meals at 50%)</span>
                     <span className="font-mono">${totalDeductible.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                   </div>
                 )}
               </CardContent>
             </Card>
 
+            {/* Above-the-Line Deductions */}
+            {aboveTheLineItems.length > 0 && (
+              <Card className="border-green-200 dark:border-green-900">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-bold">Above-the-Line Deductions (Schedule 1)</CardTitle>
+                  <CardDescription>Deducted from AGI, not on Schedule C. Reduces taxable income further.</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {aboveTheLineItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
+                  <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
+                    <span>Total Above-the-Line</span>
+                    <span className="text-green-600 font-mono">${totalAboveTheLine.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Total Expenses */}
+            <Card className="border-foreground/20">
+              <CardContent className="py-3">
+                <div className="flex justify-between font-bold px-3">
+                  <span>Total Expenses</span>
+                  <span className="font-mono">${(totalExpenses + totalAboveTheLine).toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Net Profit */}
-            <Card className={netIncome >= 0 ? "border-green-200 bg-green-50/50" : "border-red-200 bg-red-50/50"}>
+            <Card className={netIncome >= 0 ? "border-green-200 bg-green-50/50 dark:bg-green-950/20 dark:border-green-900" : "border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900"}>
               <CardContent className="py-4">
                 <div className="flex justify-between font-bold text-lg px-3">
-                  <span>Net Profit (Line 31)</span>
+                  <span>Net Profit</span>
                   <span className={`font-mono ${netIncome >= 0 ? "text-green-600" : "text-red-600"}`}>
                     ${netIncome.toLocaleString("en", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground px-3 mt-1">
-                  Self-employment tax (15.3%): ${(netIncome * 0.153).toLocaleString("en", { minimumFractionDigits: 2 })} •
-                  Est. income tax (22%): ${(netIncome * 0.22).toLocaleString("en", { minimumFractionDigits: 2 })}
-                </p>
               </CardContent>
             </Card>
 
             {/* Personal / Non-deductible */}
             {personalItems.length > 0 && (
-              <Card className="border-gray-200">
+              <Card className="border-muted">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base text-muted-foreground">Non-Deductible (Personal)</CardTitle>
                 </CardHeader>
@@ -495,9 +627,9 @@ ${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c
 
             {/* Transfers */}
             {transferItems.length > 0 && (
-              <Card className="border-gray-200">
+              <Card className="border-muted">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-muted-foreground">Transfers / Owner Draws (Not on Schedule C)</CardTitle>
+                  <CardTitle className="text-base text-muted-foreground">Transfers / Owner Draws (Not on P&L)</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0">
                   {transferItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} showLine={false} />)}
@@ -507,17 +639,11 @@ ${uncategorizedItems.length > 0 ? `<div class="section" style="background:#fef3c
 
             {/* Uncategorized Warning */}
             {uncategorizedItems.length > 0 && (
-              <Card className="border-yellow-300 bg-yellow-50/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-yellow-800">
-                    ⚠ Uncategorized ({uncategorizedItems.reduce((s, [, d]) => s + d.transactions.length, 0)} transactions)
-                  </CardTitle>
-                  <CardDescription className="text-yellow-700">
-                    These must be categorized before filing. Go to the Transactions tab to categorize them.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  {uncategorizedItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} showLine={false} />)}
+              <Card className="border-yellow-300 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-800">
+                <CardContent className="py-3">
+                  <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-400 px-3">
+                    {uncategorizedItems.reduce((s, [, d]) => s + d.transactions.length, 0)} uncategorized transactions (${uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0).toFixed(2)}) -- categorize these in the Transactions tab to maximize deductions.
+                  </p>
                 </CardContent>
               </Card>
             )}
