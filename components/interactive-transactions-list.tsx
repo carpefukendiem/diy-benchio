@@ -35,6 +35,7 @@ interface InteractiveTransactionsListProps {
 const CATEGORIES = [
   // --- Income ---
   "Sales Revenue",
+  "Service Income",
   "Freelance Income",
   "Interest Income",
   "Other Income",
@@ -42,6 +43,7 @@ const CATEGORIES = [
   "Refunds Given",
   // --- COGS ---
   "Cost of Service",
+  "Retail Product Sales COGS",
   // --- Operating Expenses (Schedule C lines 8-27) ---
   "Advertising & Marketing",
   "Soccer Team Sponsorship",
@@ -78,6 +80,15 @@ const CATEGORIES = [
   "Client Gifts",
   "Waste & Disposal",
   "SEP-IRA Contribution",
+  // === HAIR STYLIST / SALON PROFESSIONAL ===
+  "Booth Rental Expense",
+  "Hair Products & Color",
+  "Styling Tools & Equipment",
+  "Disposable Supplies",
+  "Booking & Payment Software",
+  "Laundry & Cleaning",
+  "Cosmetology License & Permits",
+  "Professional Liability Insurance",
   // --- Non-deductible / Capital items ---
   "Nondeductible Client Entertainment",
   "Business Treasury Investment",
@@ -144,6 +155,7 @@ export function InteractiveTransactionsList({
       if (field === "category") {
         const revenueCategories = [
           "Sales Revenue",
+          "Service Income",
           "Freelance Income",
           "Interest Income",
           "Other Income",

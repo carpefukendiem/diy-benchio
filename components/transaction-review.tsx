@@ -32,10 +32,14 @@ interface TransactionReviewProps {
 const CATEGORIES = [
   // === INCOME ===
   "Sales Revenue",
+  "Service Income",
   "Freelance Income",
   "Interest Income",
   "Other Income",
   "Refunds Given",
+  // === COGS ===
+  "Cost of Service",
+  "Retail Product Sales COGS",
   // === BUSINESS EXPENSES ===
   "Advertising & Marketing",
   "Social Media & Online Presence",
@@ -55,7 +59,15 @@ const CATEGORIES = [
   "Utilities Expense",
   "Waste & Sanitation Expense",
   "Home Improvement",
-  "Cost of Service",
+  // === HAIR STYLIST / SALON PROFESSIONAL ===
+  "Booth Rental Expense",
+  "Hair Products & Color",
+  "Styling Tools & Equipment",
+  "Disposable Supplies",
+  "Booking & Payment Software",
+  "Laundry & Cleaning",
+  "Cosmetology License & Permits",
+  "Professional Liability Insurance",
   // === LOANS / CAPITAL ITEMS ===
   "Business Loan Proceeds",
   "Loan Repayment - Principal",
@@ -100,7 +112,7 @@ export function TransactionReview({
 
     // Auto-update isIncome based on category
     if (field === "category") {
-      const revenueCategories = ["Sales Revenue", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"]
+      const revenueCategories = ["Sales Revenue", "Service Income", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"]
       updated[index].isIncome = revenueCategories.includes(value)
     }
 

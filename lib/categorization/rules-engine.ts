@@ -61,6 +61,17 @@ export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boole
   "00000000-0000-0000-0002-000000000047": { name: "Waste & Disposal", isIncome: false },
   "00000000-0000-0000-0002-000000000048": { name: "California LLC Fee", isIncome: false },
   "00000000-0000-0000-0002-000000000049": { name: "SEP-IRA Contribution", isIncome: false },
+  // === HAIR STYLIST / SALON PROFESSIONAL (0002-50 through 0002-60) ===
+  "00000000-0000-0000-0002-000000000050": { name: "Booth Rental Expense", isIncome: false },
+  "00000000-0000-0000-0002-000000000051": { name: "Hair Products & Color", isIncome: false },
+  "00000000-0000-0000-0002-000000000052": { name: "Styling Tools & Equipment", isIncome: false },
+  "00000000-0000-0000-0002-000000000053": { name: "Disposable Supplies", isIncome: false },
+  "00000000-0000-0000-0002-000000000054": { name: "Booking & Payment Software", isIncome: false },
+  "00000000-0000-0000-0002-000000000055": { name: "Laundry & Cleaning", isIncome: false },
+  "00000000-0000-0000-0002-000000000056": { name: "Cosmetology License & Permits", isIncome: false },
+  "00000000-0000-0000-0002-000000000057": { name: "Professional Liability Insurance", isIncome: false },
+  "00000000-0000-0000-0002-000000000058": { name: "Retail Product Sales COGS", isIncome: false },
+  "00000000-0000-0000-0001-000000000007": { name: "Service Income", isIncome: true },
   "00000000-0000-0000-0001-000000000005": { name: "Interest Income", isIncome: true },
   "00000000-0000-0000-0001-000000000006": { name: "Returns & Allowances", isIncome: false },
   "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isIncome: false },
@@ -391,6 +402,130 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'stripe fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'square fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'paypal fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // ============================================================================================
+  // HAIR STYLIST / SALON PROFESSIONAL — all categories below are 0002-50 through 0002-58
+  // ============================================================================================
+
+  // --- BOOTH RENTAL (0002-50) — Schedule C Line 20b ---
+  { pattern: 'booth rent', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'booth fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'chair rent', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'chair rental', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'salon rent', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'salon fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.92 },
+  { pattern: 'station rent', match: 'contains', category_id: '00000000-0000-0000-0002-000000000050', is_personal: false, is_transfer: false, confidence: 0.95 },
+
+  // --- HAIR PRODUCTS & COLOR (0002-51) — Schedule C Line 22 ---
+  { pattern: 'sally beauty', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'sallybeauty', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'cosmoprof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'cosmo prof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'ulta beauty supply', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'beauty supply', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'wella', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.93 },
+  { pattern: 'redken', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'loreal prof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: "l'oreal prof", match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'kerastase', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'kérastase', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'schwarzkopf', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'aveda', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'joico', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'pravana', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'olaplex', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'kenra', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'matrix', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'paul mitchell', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'bumble and bumble', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'bumbleandbumble', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'moroccanoil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'moroccan oil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'goldwell', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'framesi', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'ion color', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hair color', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'hair product', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'btc hair', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'behind the chair', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.92 },
+  { pattern: 'hair extensions', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'great lengths', match: 'contains', category_id: '00000000-0000-0000-0002-000000000051', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // --- STYLING TOOLS & EQUIPMENT (0002-52) — Schedule C Line 22 / 13 ---
+  { pattern: 'babyliss', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'dyson hair', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'chi air', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hot tools', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.92 },
+  { pattern: 'wahl', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'andis', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'oster clippers', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'styling iron', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'flat iron', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'hair dryer', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'shears', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.92 },
+  { pattern: 'scissors', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'salon equipment', match: 'contains', category_id: '00000000-0000-0000-0002-000000000052', is_personal: false, is_transfer: false, confidence: 0.92 },
+
+  // --- DISPOSABLE SUPPLIES (0002-53) — Schedule C Line 22 ---
+  { pattern: 'gloves', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'foil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.70 },
+  { pattern: 'highlight foil', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'salon capes', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'neck strips', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'color brushes', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'salon towels', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'mixing bowl', match: 'contains', category_id: '00000000-0000-0000-0002-000000000053', is_personal: false, is_transfer: false, confidence: 0.75 },
+
+  // --- BOOKING & PAYMENT SOFTWARE (0002-54) — Schedule C Line 27a ---
+  { pattern: 'vagaro', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'glossgenius', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'gloss genius', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'schedulicity', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'styleseat', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'style seat', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'booksy', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'fresha', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'acuity scheduling', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'mindbody', match: 'contains', category_id: '00000000-0000-0000-0002-000000000054', is_personal: false, is_transfer: false, confidence: 0.90 },
+
+  // --- LAUNDRY & CLEANING (0002-55) — Schedule C Line 27a ---
+  { pattern: 'laundry service', match: 'contains', category_id: '00000000-0000-0000-0002-000000000055', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'towel service', match: 'contains', category_id: '00000000-0000-0000-0002-000000000055', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'cape cleaning', match: 'contains', category_id: '00000000-0000-0000-0002-000000000055', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'cleaners', match: 'contains', category_id: '00000000-0000-0000-0002-000000000055', is_personal: false, is_transfer: false, confidence: 0.65 },
+  { pattern: 'dry clean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000055', is_personal: false, is_transfer: false, confidence: 0.70 },
+
+  // --- COSMETOLOGY LICENSE & PERMITS (0002-56) — Schedule C Line 23 ---
+  { pattern: 'ca board barbering', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'board of barbering', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'cosmetology license', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'cosmetology board', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'barbering license', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'esthetician license', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+  { pattern: 'barbcosmo', match: 'contains', category_id: '00000000-0000-0000-0002-000000000056', is_personal: false, is_transfer: false, confidence: 0.99 },
+
+  // --- PROFESSIONAL LIABILITY INSURANCE (0002-57) — Schedule C Line 15 ---
+  { pattern: 'beauty insure', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'salon insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'cosmetology insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'beauty pro insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'hiscox', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.87 },
+  { pattern: 'next insurance', match: 'contains', category_id: '00000000-0000-0000-0002-000000000057', is_personal: false, is_transfer: false, confidence: 0.87 },
+
+  // --- RETAIL PRODUCT SALES COGS (0002-58) — Schedule C Line 4 ---
+  // Products purchased specifically for resale to clients (retail shelf stock)
+  { pattern: 'retail stock', match: 'contains', category_id: '00000000-0000-0000-0002-000000000058', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'product for resale', match: 'contains', category_id: '00000000-0000-0000-0002-000000000058', is_personal: false, is_transfer: false, confidence: 0.95 },
+
+  // --- SERVICE INCOME (0001-07) — Schedule C Line 1 ---
+  // Hair stylists paid via booking apps, Square, or direct transfers
+  { pattern: 'square transfer', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'square deposit', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'vagaro payout', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'glossgenius payout', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'styleseat payout', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'booksy payout', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.98 },
+  { pattern: 'client payment', match: 'contains', category_id: '00000000-0000-0000-0001-000000000007', is_personal: false, is_transfer: false, confidence: 0.80 },
 
   // ============================
   // TRANSFERS (0003) — NOT on Schedule C
