@@ -56,7 +56,7 @@ interface Transaction {
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal" | "investment"
   month: string
   year: string
   fileName: string

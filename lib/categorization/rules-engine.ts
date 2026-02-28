@@ -751,13 +751,44 @@ export function smartFallback(tx: ParsedTransaction): {
   return null;
 }
 
+// High-priority patterns that always win regardless of vendor rules
+// (e.g. overdraft fee on a GHL transaction must be Bank Fee, not Software)
+const HIGH_PRIORITY_PATTERNS: Array<{
+  pattern: string;
+  category_id: string;
+  is_personal: boolean;
+  is_transfer: boolean;
+}> = [
+  { pattern: 'overdraft fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
+  { pattern: 'monthly service fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
+  { pattern: 'overdraft protection from', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
+  { pattern: 'online transfer to ruiz r everyday checking', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
+  { pattern: 'online transfer from ruiz r', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
+  { pattern: 'chase credit crd', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+];
+
 export function categorizeByRules(
   transactions: ParsedTransaction[],
   customRules?: CategorizationRule[]
 ): CategorizedTransaction[] {
   return transactions.map(tx => {
     const descLower = tx.description.toLowerCase();
-    
+
+    // Priority 0: High-priority patterns override all vendor rules
+    for (const rule of HIGH_PRIORITY_PATTERNS) {
+      if (descLower.includes(rule.pattern)) {
+        return {
+          ...tx,
+          category_id: rule.category_id,
+          schedule_c_line: null,
+          is_personal: rule.is_personal,
+          is_transfer: rule.is_transfer,
+          confidence: 0.99,
+          categorized_by: 'rule' as const,
+        };
+      }
+    }
+
     // Check custom (user) rules first
     if (customRules) {
       for (const rule of customRules.sort((a, b) => b.priority - a.priority)) {

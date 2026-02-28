@@ -17,7 +17,7 @@ import { TransactionReview } from "@/components/transaction-review"
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal" | "investment"
   month: string
   year: string
   fileName: string
@@ -48,7 +48,7 @@ const MONTHS = [
 
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
-  const [accountType, setAccountType] = useState<"bank" | "credit_card">("bank")
+  const [accountType, setAccountType] = useState<"bank" | "credit_card" | "personal" | "investment">("bank")
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
@@ -260,11 +260,22 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     event.target.value = ""
   }
 
+  const autoTagForAccountType = (txns: any[]) => {
+    if (accountType === "personal") {
+      return txns.map((t) => ({ ...t, category: "Personal Expense", isIncome: false, isPersonal: true }))
+    }
+    if (accountType === "investment") {
+      return txns.map((t) => ({ ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }))
+    }
+    return txns
+  }
+
   const handleAutoImport = () => {
     if (allParsedTransactions.length === 0) return
 
+    const taggedTransactions = autoTagForAccountType(allParsedTransactions)
     const statementsByMonth = new Map<string, any[]>()
-    allParsedTransactions.forEach((t) => {
+    taggedTransactions.forEach((t) => {
       const key = t.date.substring(0, 7)
       if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
       statementsByMonth.get(key)!.push(t)
@@ -285,7 +296,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     })
 
     onStatementsUpdate([...existingStatements, ...newStatements])
-    toast({ title: "Imported!", description: `${allParsedTransactions.length} transactions from ${newStatements.length} months.` })
+    toast({ title: "Imported!", description: `${taggedTransactions.length} transactions from ${newStatements.length} months.` })
     setFileProgress([]); setAllParsedTransactions([]); setProcessedFiles([]); setAccountName("")
     if (onContinue) setTimeout(() => onContinue(), 500)
   }
@@ -294,8 +305,9 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
   const handleApproveFromReview = (transactions: any[]) => {
     setShowReview(false)
+    const taggedTransactions = autoTagForAccountType(transactions)
     const statementsByMonth = new Map<string, any[]>()
-    transactions.forEach((t) => {
+    taggedTransactions.forEach((t) => {
       const key = t.date.substring(0, 7)
       if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
       statementsByMonth.get(key)!.push(t)
@@ -312,7 +324,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       }
     })
     onStatementsUpdate([...existingStatements, ...newStatements])
-    toast({ title: "Imported!", description: `${transactions.length} transactions imported.` })
+    toast({ title: "Imported!", description: `${taggedTransactions.length} transactions imported.` })
     setFileProgress([]); setAllParsedTransactions([]); setProcessedFiles([]); setAccountName("")
     if (onContinue) setTimeout(() => onContinue(), 500)
   }
@@ -410,8 +422,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                 <Select value={accountType} onValueChange={(v) => setAccountType(v as any)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank">Bank Account</SelectItem>
-                    <SelectItem value="credit_card">Credit Card</SelectItem>
+                    <SelectItem value="bank">Business Bank Account</SelectItem>
+                    <SelectItem value="credit_card">Business Credit Card</SelectItem>
+                    <SelectItem value="personal">Personal Account (auto-excluded from taxes)</SelectItem>
+                    <SelectItem value="investment">Investment / Brokerage (auto-excluded from taxes)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -509,11 +523,15 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         <Card>
           <CardHeader><CardTitle>Uploaded Statements</CardTitle></CardHeader>
           <CardContent>
-            {Object.entries(statementsByAccount).map(([acctName, statements]) => (
+            {Object.entries(statementsByAccount).map(([acctName, statements]) => {
+              const acctType = statements[0]?.accountType
+              const isExcluded = acctType === "personal" || acctType === "investment"
+              return (
               <div key={acctName} className="space-y-3 mb-4">
                 <div className="flex items-center gap-2">
                   <h3 className="font-semibold">{acctName}</h3>
                   <Badge>{statements.length} months</Badge>
+                  {isExcluded && <Badge variant="secondary" className="text-orange-600 border-orange-300 bg-orange-50">Excluded from taxes</Badge>}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {statements.map((s) => (
@@ -532,7 +550,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                   ))}
                 </div>
               </div>
-            ))}
+            )})}
           </CardContent>
         </Card>
       )}
