@@ -23,6 +23,7 @@ interface InteractiveReportsProps {
   transactions: Transaction[]
   onUpdateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
   dateRange: { start: string; end: string }
+  businessName?: string
 }
 
 // Schedule C line mapping — IRS accurate, aligned with bench.io categories
@@ -73,9 +74,15 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "Home Office Expense": { line: "30", label: "Business use of home" },
   "SEP-IRA Contribution": { line: "S1-16", label: "Self-employed SEP/SIMPLE/qualified plans (Schedule 1)" },
   "Business Treasury Investment": { line: "N/A", label: "Asset -- not current year deduction" },
+  // Stripe Capital / Business Loan — proceeds are NOT income, repayments are NOT deductible (principal)
+  "Business Loan Proceeds": { line: "N/A", label: "Loan proceeds -- not income, not deductible (debt)" },
+  "Loan Repayment - Principal": { line: "N/A", label: "Loan principal -- not deductible" },
+  "Loan Interest Expense": { line: "16b", label: "Interest expense (deductible)" },
+  // Crypto treasury purchase — capital asset, cost basis tracked separately
+  "Crypto Treasury Purchase": { line: "N/A", label: "Capital asset purchase -- not expense (track cost basis)" },
 }
 
-export function InteractiveReports({ transactions, onUpdateTransaction, dateRange }: InteractiveReportsProps) {
+export function InteractiveReports({ transactions, onUpdateTransaction, dateRange, businessName = "My Business" }: InteractiveReportsProps) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const { toast } = useToast()
 
@@ -92,8 +99,8 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     return totals
   }, [transactions])
 
-  // Separate into bench.io-style sections: Revenue, COGS, Operating Expenses, Above-the-line, Personal, Transfers
-  const { revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems } = useMemo(() => {
+  // Separate into bench.io-style sections: Revenue, COGS, Operating Expenses, Above-the-line, Personal, Transfers, Capital
+  const { revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, capitalItems } = useMemo(() => {
     const revenue: [string, typeof categoryTotals[string]][] = []
     const returns: [string, typeof categoryTotals[string]][] = []
     const cogs: [string, typeof categoryTotals[string]][] = []
@@ -103,19 +110,23 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     const transfer: [string, typeof categoryTotals[string]][] = []
     const uncategorized: [string, typeof categoryTotals[string]][] = []
     const nondeductible: [string, typeof categoryTotals[string]][] = []
+    const capital: [string, typeof categoryTotals[string]][] = []
 
-    const personalKeywords = ["personal", "crypto"]
+    const personalKeywords = ["personal", "crypto / investments"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
     const cogsKeywords = ["cost of service", "cost of goods"]
     const aboveLineKeywords = ["health insurance", "sep-ira"]
     const nondeductibleKeywords = ["nondeductible"]
     const returnsKeywords = ["returns & allowances", "refunds given"]
+    // Capital/balance-sheet items: not income, not deductible expenses
+    const capitalKeywords = ["business loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
 
     Object.entries(categoryTotals).forEach(([cat, data]) => {
       const cl = cat.toLowerCase()
       if (cl.includes("uncategorized") || cl.includes("awaiting category")) { uncategorized.push([cat, data]); return }
       if (nondeductibleKeywords.some(k => cl.includes(k))) { nondeductible.push([cat, data]); return }
       if (returnsKeywords.some(k => cl.includes(k))) { returns.push([cat, data]); return }
+      if (capitalKeywords.some(k => cl.includes(k))) { capital.push([cat, data]); return }
       if (data.isIncome || cl.includes("revenue") || cl.includes("income")) { revenue.push([cat, data]); return }
       if (transferKeywords.some(k => cl.includes(k))) { transfer.push([cat, data]); return }
       if (personalKeywords.some(k => cl.includes(k))) { personal.push([cat, data]); return }
@@ -134,6 +145,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
       transferItems: transfer.sort((a, b) => b[1].amount - a[1].amount),
       uncategorizedItems: uncategorized,
       nondeductibleItems: nondeductible,
+      capitalItems: capital,
     }
   }, [categoryTotals])
 
@@ -308,10 +320,10 @@ td, th { padding: 4px 0; vertical-align: top; }
 </style></head><body>
 
 <div class="header">
-<h1>Ranking SB</h1>
+<h1>${businessName}</h1>
 <h2>Annual Income Statement</h2>
 <div class="period">For the period ${year}</div>
-<div class="year-label">Year ${year}</div>
+<div class="year-label">Tax Year ${year}</div>
 </div>
 
 <table>
@@ -365,6 +377,18 @@ ${aboveTheLineItems.map(([cat, data]) => {
 <tr class="grand-total"><td>Net Profit</td><td class="amt">${fmtAmt(netIncome)}</td></tr>
 </table>
 
+${capitalItems.length > 0 ? `
+<div class="sched-c" style="margin-top: 24px; background: #eef4ff; border-color: #b0c8f0;">
+<h3 style="color: #1e40af;">Capital &amp; Financing Items (Not on Schedule C)</h3>
+<p style="font-size: 9px; color: #1e40af; margin: 0 0 8px;">These are balance-sheet items. Loan proceeds are NOT income. Crypto treasury is a capital asset. Loan principal repayments are NOT deductible.</p>
+<table>
+${capitalItems.map(([cat, data]) => {
+  const note = SCHEDULE_C_LINES[cat]?.label || ""
+  return `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr><tr><td colspan="2" style="font-size:8.5px;color:#6b7280;padding-left:12px;padding-bottom:4px;">${note}</td></tr>`
+}).join("")}
+</table>
+</div>` : ""}
+
 ${personalItems.length > 0 || transferItems.length > 0 ? `
 <div class="sched-c" style="margin-top: 24px; background: #f9f9f9;">
 <h3>Non-Business Items (Not on Schedule C)</h3>
@@ -390,7 +414,7 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `Ranking-SB-Income-Statement-${year}.html`
+    a.download = `${businessName.replace(/[^a-z0-9]/gi, "-")}-Income-Statement-${year}.html`
     a.click()
     URL.revokeObjectURL(url)
 
@@ -405,7 +429,7 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
     } catch {}
 
     toast({ title: "Income Statement Downloaded", description: "Open the HTML file, then use File -> Print -> Save as PDF for a clean PDF." })
-  }, [revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, netIncome, dateRange, toast])
+  }, [revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, capitalItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, netIncome, dateRange, businessName, toast])
 
   // Render a category row with expandable transaction list
   const CategoryRow = ({ cat, data, showLine = true }: { cat: string; data: typeof categoryTotals[string]; showLine?: boolean }) => {
@@ -612,6 +636,19 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
                 </div>
               </CardContent>
             </Card>
+
+            {/* Capital / Financing Items */}
+            {capitalItems.length > 0 && (
+              <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-950/20 dark:border-blue-800">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-blue-700 dark:text-blue-400">Capital &amp; Financing Items</CardTitle>
+                  <p className="text-xs text-muted-foreground">These are balance-sheet items — not income and not deductible. Shown for your accountant's reference.</p>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {capitalItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} showLine={true} />)}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Personal / Non-deductible */}
             {personalItems.length > 0 && (
