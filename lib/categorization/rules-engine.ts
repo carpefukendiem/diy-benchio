@@ -75,20 +75,15 @@ const BUILT_IN_RULES: Array<{
   // === HOME IMPROVEMENT ===
   { pattern: 'home depot', match: 'contains', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, confidence: 0.70 },
 
-  // === BANK FEES (Line 16b) ===
-  { pattern: 'overdraft fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
-  { pattern: 'monthly service fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  // === BANK FEES (Line 16b) — also handled by HIGH_PRIORITY_PATTERNS, kept here as fallback ===
+  { pattern: 'wire transfer fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'returned item fee', match: 'contains', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.95 },
 
-  // === TRANSFERS ===
-  { pattern: 'online transfer to ruiz r everyday checking', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.95 },
-  { pattern: 'online transfer from ruiz r', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.95 },
+  // === TRANSFERS — common patterns not in HIGH_PRIORITY_PATTERNS ===
   { pattern: 'online transfer to nail-ruiz', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'online transfer from nail-ruiz', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'online transfer to carpefukendiem', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'recurring transfer to carpefukendiem', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.90 },
-  { pattern: 'chase credit crd', match: 'contains', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.95 },
-  { pattern: 'overdraft protection from', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.95 },
-  { pattern: 'save as you go', match: 'contains', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true, confidence: 0.95 },
 
   // === ZELLE ===
   { pattern: 'zelle to ruiz janice', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.80 },
@@ -120,14 +115,45 @@ const BUILT_IN_RULES: Array<{
   { pattern: 'lighthouse cof', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.60 },
 ];
 
+// High-priority patterns that always win regardless of other vendor matches
+const HIGH_PRIORITY_PATTERNS: Array<{
+  pattern: string;
+  category_id: string;
+  is_personal: boolean;
+  is_transfer: boolean;
+}> = [
+  { pattern: 'overdraft fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
+  { pattern: 'monthly service fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
+  { pattern: 'overdraft protection from', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
+  { pattern: 'save as you go', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
+  { pattern: 'online transfer to ruiz r everyday checking', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
+  { pattern: 'online transfer from ruiz r', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
+  { pattern: 'chase credit crd', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+];
+
 export function categorizeByRules(
   transactions: ParsedTransaction[],
   customRules?: CategorizationRule[]
 ): CategorizedTransaction[] {
   return transactions.map(tx => {
     const descLower = tx.description.toLowerCase();
-    
-    // Check custom (user) rules first
+
+    // === Priority 0: High-priority patterns (fee/transfer patterns that must win over vendor rules) ===
+    for (const rule of HIGH_PRIORITY_PATTERNS) {
+      if (descLower.includes(rule.pattern)) {
+        return {
+          ...tx,
+          category_id: rule.category_id,
+          schedule_c_line: null,
+          is_personal: rule.is_personal,
+          is_transfer: rule.is_transfer,
+          confidence: 0.99,
+          categorized_by: 'rule' as const,
+        };
+      }
+    }
+
+    // === Priority 1: Custom user rules ===
     if (customRules) {
       for (const rule of customRules.sort((a, b) => b.priority - a.priority)) {
         if (matchesRule(descLower, rule.pattern.toLowerCase(), rule.match_type)) {
@@ -143,8 +169,8 @@ export function categorizeByRules(
         }
       }
     }
-    
-    // Check built-in rules
+
+    // === Priority 2: Built-in vendor rules ===
     for (const rule of BUILT_IN_RULES) {
       if (matchesRule(descLower, rule.pattern, rule.match)) {
         return {
@@ -158,7 +184,7 @@ export function categorizeByRules(
         };
       }
     }
-    
+
     // No match
     return {
       ...tx,

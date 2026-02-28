@@ -40,7 +40,7 @@ interface Transaction {
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal" | "investment"
   month: string
   year: string
   fileName: string
@@ -418,97 +418,158 @@ export default function CaliforniaBusinessAccounting() {
             </TabsContent>
 
             <TabsContent value="deductions" className="space-y-6">
-              <div className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Deduction Tracking & Optimization</CardTitle>
-                    <CardDescription>
-                      Monitor your {currentBusiness.profile.deductions?.length || 0} configured deduction categories to
-                      maximize tax savings and minimize your California tax liability.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {currentBusiness.profile.deductions.map((deduction) => {
-                          const relatedTransactions = currentBusiness.transactions.filter(
-                            (t) =>
-                              !t.isIncome &&
-                              (t.category.toLowerCase().includes(deduction.toLowerCase()) ||
-                                t.description.toLowerCase().includes(deduction.toLowerCase()) ||
-                                deduction.toLowerCase().includes(t.category.toLowerCase())),
-                          )
-                          const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
-                          const savings = Math.round(totalAmount * 0.35)
+              {(() => {
+                // Compute per-category expense totals from real transactions
+                const personalOrTransfer = new Set([
+                  "Internal Transfer", "Credit Card Payment", "Member Drawing - Ruben Ruiz",
+                  "Member Contribution - Ruben Ruiz", "Personal Expense", "Personal - Groceries",
+                  "Personal - Entertainment", "Personal - Shopping", "Personal - Food & Drink",
+                  "Personal - Health", "ATM Withdrawal", "Zelle / Venmo Transfer", "Crypto / Investments",
+                ])
+                const expenseByCat: Record<string, { amount: number; count: number }> = {}
+                currentBusiness.transactions.forEach((t) => {
+                  if (t.isIncome || personalOrTransfer.has(t.category)) return
+                  if (!expenseByCat[t.category]) expenseByCat[t.category] = { amount: 0, count: 0 }
+                  expenseByCat[t.category].amount += t.amount
+                  expenseByCat[t.category].count++
+                })
+                const sortedCategories = Object.entries(expenseByCat).sort(([, a], [, b]) => b.amount - a.amount)
+                const uncategorizedCount = currentBusiness.transactions.filter(
+                  (t) => !t.isIncome && t.category === "Uncategorized Expense"
+                ).length
+                const netProfit = totalRevenue - totalExpenses
+                const seTax = Math.max(0, netProfit) * 0.9235 * 0.153
+                const estIncomeTax = Math.max(0, netProfit - seTax * 0.5) * 0.22
+                const totalTax = seTax + estIncomeTax
 
-                          return (
-                            <Card key={deduction} className="hover:shadow-md transition-shadow">
-                              <CardContent className="p-4">
-                                <h4 className="font-semibold text-sm mb-2 line-clamp-2">{deduction}</h4>
-                                <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
-                                <div className="text-sm text-green-600 font-medium mb-2">
-                                  Tax Savings: ${savings.toFixed(2)}
+                return (
+                  <div className="space-y-6">
+                    {/* Schedule C Summary */}
+                    <Card className="border-green-200 bg-green-50/30">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Calculator className="h-5 w-5 text-green-600" />
+                          Schedule C Tax Summary (2025 YTD)
+                        </CardTitle>
+                        <CardDescription>Self-employment tax calculation based on uploaded statements</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="p-3 bg-white rounded-lg border">
+                            <p className="text-xs text-muted-foreground mb-1">Gross Revenue</p>
+                            <p className="text-xl font-bold text-green-600">${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                          </div>
+                          <div className="p-3 bg-white rounded-lg border">
+                            <p className="text-xs text-muted-foreground mb-1">Total Deductions</p>
+                            <p className="text-xl font-bold text-blue-600">${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                          </div>
+                          <div className="p-3 bg-white rounded-lg border">
+                            <p className="text-xs text-muted-foreground mb-1">Net Profit (Sch. C)</p>
+                            <p className={`text-xl font-bold ${netProfit >= 0 ? "text-orange-600" : "text-green-600"}`}>${netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                          </div>
+                          <div className="p-3 bg-white rounded-lg border">
+                            <p className="text-xs text-muted-foreground mb-1">Est. Total Tax Owed</p>
+                            <p className="text-xl font-bold text-red-600">${totalTax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+                            <p className="text-xs text-muted-foreground">SE: ${seTax.toFixed(0)} + Income: ${estIncomeTax.toFixed(0)}</p>
+                          </div>
+                        </div>
+                        {uncategorizedCount > 0 && (
+                          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+                            <span className="text-amber-600 font-medium">{uncategorizedCount} uncategorized transactions</span>
+                            <span className="text-sm text-muted-foreground">— review in Transaction Processing tab to capture more deductions</span>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Per-Category Deduction Breakdown */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Deductions by Category</CardTitle>
+                        <CardDescription>All business expense categories from your uploaded statements</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        {sortedCategories.length > 0 ? (
+                          <div className="space-y-3">
+                            {sortedCategories.map(([category, data]) => {
+                              const savings = data.amount * 0.35
+                              const pct = totalExpenses > 0 ? (data.amount / totalExpenses) * 100 : 0
+                              return (
+                                <div key={category} className="flex items-center gap-4 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <p className="font-medium text-sm truncate">{category}</p>
+                                      <div className="flex items-center gap-3 ml-2 shrink-0">
+                                        <span className="text-xs text-muted-foreground">{data.count} txns</span>
+                                        <span className="text-sm text-green-600 font-medium">saves ~${savings.toFixed(0)}</span>
+                                        <span className="font-bold">${data.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                      </div>
+                                    </div>
+                                    <div className="w-full bg-muted rounded-full h-1.5">
+                                      <div
+                                        className="bg-blue-500 h-1.5 rounded-full"
+                                        style={{ width: `${Math.min(100, pct)}%` }}
+                                      />
+                                    </div>
+                                  </div>
                                 </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {relatedTransactions.length} transactions • 2025 YTD
-                                </p>
-                              </CardContent>
-                            </Card>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8">
-                        <p className="text-muted-foreground">
-                          No deduction categories configured. Add deduction tracking when setting up your business.
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-center py-8">
+                            <p className="text-muted-foreground">
+                              Upload business statements to see deduction breakdown
+                            </p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>California Tax Optimization Summary</CardTitle>
-                    <CardDescription>Your current tax minimization performance</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                          <span className="font-medium">Total Deductible Expenses:</span>
-                          <span className="font-bold text-blue-600">${totalExpenses.toLocaleString()}</span>
+                    {/* Optimization Tips */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>California Tax Optimization Tips</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          <div className="space-y-3">
+                            <div className="p-3 bg-blue-50 rounded-lg">
+                              <p className="font-semibold text-blue-800 mb-1">SEP-IRA Contribution</p>
+                              <p className="text-blue-700">Contribute up to 25% of net profit (max $69,000) to a SEP-IRA before filing deadline. Reduces both income and SE tax.</p>
+                              {netProfit > 0 && <p className="font-bold text-blue-800 mt-1">Your max: ${Math.min(netProfit * 0.25, 69000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>}
+                            </div>
+                            <div className="p-3 bg-green-50 rounded-lg">
+                              <p className="font-semibold text-green-800 mb-1">Home Office (Form 8829)</p>
+                              <p className="text-green-700">Simplified method: $5/sq ft up to 300 sq ft = $1,500/yr. Requires dedicated space used regularly and exclusively for business.</p>
+                            </div>
+                            <div className="p-3 bg-purple-50 rounded-lg">
+                              <p className="font-semibold text-purple-800 mb-1">Self-Employed Health Insurance</p>
+                              <p className="text-purple-700">100% of health/dental/vision premiums deductible on Schedule 1 (not Sch. C). Reduces adjusted gross income directly.</p>
+                            </div>
+                          </div>
+                          <div className="space-y-3">
+                            <div className="p-3 bg-amber-50 rounded-lg">
+                              <p className="font-semibold text-amber-800 mb-1">Vehicle Mileage (70¢/mile)</p>
+                              <p className="text-amber-700">Track every business mile. Client meetings, supply runs, networking events all qualify. Use MileIQ or Everlance app.</p>
+                            </div>
+                            <div className="p-3 bg-rose-50 rounded-lg">
+                              <p className="font-semibold text-rose-800 mb-1">Section 179 Equipment</p>
+                              <p className="text-rose-700">100% first-year deduction on computers, phones, cameras, and other business equipment up to $1.22M. Must be purchased and in service by Dec 31.</p>
+                            </div>
+                            <div className="p-3 bg-slate-50 rounded-lg">
+                              <p className="font-semibold text-slate-800 mb-1">Quarterly Estimated Taxes</p>
+                              <p className="text-slate-700">Pay estimated taxes Apr 15, Jun 15, Sep 15, Jan 15 to avoid underpayment penalty.
+                                {netProfit > 0 && <span className="font-bold"> Each quarter: ~${(totalTax / 4).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-                          <span className="font-medium">Estimated Tax Savings:</span>
-                          <span className="font-bold text-green-600">${taxSavings.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        <h4 className="font-semibold">Optimization Tips:</h4>
-                        <ul className="text-sm space-y-2">
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Review uncategorized transactions for additional deductions</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Consider equipment purchases before year-end for Section 179 deductions</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Maximize retirement contributions to reduce current year taxes</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="text-green-500 mt-0.5">•</span>
-                            <span>Document home office expenses if working from home</span>
-                          </li>
-                        </ul>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )
+              })()}
             </TabsContent>
           </Tabs>
         </div>

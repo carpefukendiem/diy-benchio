@@ -80,7 +80,7 @@ export async function POST(request: Request) {
       "00000000-0000-0000-0002-000000000021": { name: "Phone & Internet Expense", isPersonal: false, isTransfer: false },
       "00000000-0000-0000-0002-000000000022": { name: "Software & Web Hosting Expense", isPersonal: false, isTransfer: false },
       "00000000-0000-0000-0002-000000000023": { name: "Education & Training", isPersonal: false, isTransfer: false },
-      "00000000-0000-0000-0002-000000000025": { name: "Utilities Expense", isPersonal: false, isTransfer: false },
+      "00000000-0000-0000-0002-000000000025": { name: "Waste & Sanitation Expense", isPersonal: false, isTransfer: false },
       "00000000-0000-0000-0002-000000000026": { name: "Home Improvement", isPersonal: false, isTransfer: false },
       "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isPersonal: false, isTransfer: true },
       "00000000-0000-0000-0003-000000000002": { name: "Member Contribution - Ruben Ruiz", isPersonal: false, isTransfer: true },

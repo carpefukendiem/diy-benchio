@@ -32,40 +32,84 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
   const [editingMode, setEditingMode] = useState(false)
   const { toast } = useToast()
 
-  // Calculate financial data
+  // Calculate financial data — separate income vs expense buckets
   const categoryTotals = useMemo(() => {
     const totals: Record<string, { amount: number; transactions: Transaction[] }> = {}
 
     transactions.forEach((transaction) => {
-      const category = transaction.category
-      if (!totals[category]) {
-        totals[category] = { amount: 0, transactions: [] }
+      // Skip transfers and personal items from financial report
+      const cat = transaction.category
+      const skip = [
+        "Internal Transfer",
+        "Credit Card Payment",
+        "Member Drawing - Ruben Ruiz",
+        "Member Contribution - Ruben Ruiz",
+        "Personal Expense",
+        "Personal - Groceries",
+        "Personal - Entertainment",
+        "Personal - Shopping",
+        "Personal - Food & Drink",
+        "Personal - Health",
+        "ATM Withdrawal",
+        "Zelle / Venmo Transfer",
+        "Crypto / Investments",
+      ]
+      if (skip.includes(cat)) return
+
+      if (!totals[cat]) {
+        totals[cat] = { amount: 0, transactions: [] }
       }
-      totals[category].amount += transaction.amount
-      totals[category].transactions.push(transaction)
+      totals[cat].amount += transaction.amount
+      totals[cat].transactions.push(transaction)
     })
 
     return totals
   }, [transactions])
 
-  // Income Statement Data
-  const revenueCategories = ["Sales Revenue", "Interest Income", "Other Income"]
-  const expenseCategories = [
-    "Software & Web Hosting Expense",
-    "Business Meals Expense",
-    "Gas & Auto Expense",
-    "Bank & ATM Fee Expense",
-    "Insurance Expense - Business",
-    "Merchant Fees Expense",
-    "Office Supply Expense",
-    "Phone & Internet Expense",
-    "Professional Service Expense",
-    "Rent Expense",
-    "Utilities Expense",
-  ]
+  // Revenue: only income transactions grouped by category
+  const revenueTotals = useMemo(() => {
+    const totals: Record<string, { amount: number; count: number }> = {}
+    transactions.forEach((t) => {
+      if (!t.isIncome) return
+      const cat = t.category
+      if (!totals[cat]) totals[cat] = { amount: 0, count: 0 }
+      totals[cat].amount += t.amount
+      totals[cat].count++
+    })
+    return totals
+  }, [transactions])
 
-  const totalRevenue = revenueCategories.reduce((sum, cat) => sum + (categoryTotals[cat]?.amount || 0), 0)
-  const totalExpenses = expenseCategories.reduce((sum, cat) => sum + (categoryTotals[cat]?.amount || 0), 0)
+  // Expenses: only non-income, non-transfer, non-personal transactions
+  const expenseTotals = useMemo(() => {
+    const personalOrTransfer = [
+      "Internal Transfer",
+      "Credit Card Payment",
+      "Member Drawing - Ruben Ruiz",
+      "Member Contribution - Ruben Ruiz",
+      "Personal Expense",
+      "Personal - Groceries",
+      "Personal - Entertainment",
+      "Personal - Shopping",
+      "Personal - Food & Drink",
+      "Personal - Health",
+      "ATM Withdrawal",
+      "Zelle / Venmo Transfer",
+      "Crypto / Investments",
+    ]
+    const totals: Record<string, { amount: number; count: number }> = {}
+    transactions.forEach((t) => {
+      if (t.isIncome) return
+      if (personalOrTransfer.includes(t.category)) return
+      const cat = t.category
+      if (!totals[cat]) totals[cat] = { amount: 0, count: 0 }
+      totals[cat].amount += t.amount
+      totals[cat].count++
+    })
+    return totals
+  }, [transactions])
+
+  const totalRevenue = Object.values(revenueTotals).reduce((sum, v) => sum + v.amount, 0)
+  const totalExpenses = Object.values(expenseTotals).reduce((sum, v) => sum + v.amount, 0)
   const netIncome = totalRevenue - totalExpenses
 
   const handleCategoryUpdate = async (oldCategory: string, newCategory: string) => {
@@ -203,10 +247,9 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
                     Revenue
                   </h3>
                   <div className="space-y-2">
-                    {revenueCategories.map((category) => {
-                      const categoryData = categoryTotals[category]
-                      const amount = categoryData?.amount || 0
-                      return (
+                    {Object.entries(revenueTotals)
+                      .sort(([, a], [, b]) => b.amount - a.amount)
+                      .map(([category, data]) => (
                         <div key={category} className="flex justify-between items-center group">
                           <div className="flex items-center gap-2">
                             {editingMode ? (
@@ -218,19 +261,19 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
                             ) : (
                               <span className="text-muted-foreground">{category}</span>
                             )}
-                            {categoryData && (
-                              <Badge variant="outline" className="text-xs">
-                                {categoryData.transactions.length} transactions
-                              </Badge>
-                            )}
+                            <Badge variant="outline" className="text-xs">
+                              {data.count} transactions
+                            </Badge>
                           </div>
-                          <span className="font-medium">${amount.toLocaleString()}</span>
+                          <span className="font-medium text-green-600">${data.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                      )
-                    })}
+                      ))}
+                    {Object.keys(revenueTotals).length === 0 && (
+                      <p className="text-sm text-muted-foreground italic">No income transactions found</p>
+                    )}
                     <div className="flex justify-between font-semibold border-t pt-2">
                       <span>Total Revenue</span>
-                      <span className="text-green-600">${totalRevenue.toLocaleString()}</span>
+                      <span className="text-green-600">${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   </div>
                 </div>
@@ -242,10 +285,9 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
                     Operating Expenses
                   </h3>
                   <div className="space-y-2">
-                    {expenseCategories.map((category) => {
-                      const categoryData = categoryTotals[category]
-                      const amount = categoryData?.amount || 0
-                      return (
+                    {Object.entries(expenseTotals)
+                      .sort(([, a], [, b]) => b.amount - a.amount)
+                      .map(([category, data]) => (
                         <div key={category} className="flex justify-between items-center group">
                           <div className="flex items-center gap-2">
                             {editingMode ? (
@@ -257,19 +299,19 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
                             ) : (
                               <span className="text-muted-foreground">{category}</span>
                             )}
-                            {categoryData && (
-                              <Badge variant="outline" className="text-xs">
-                                {categoryData.transactions.length} transactions
-                              </Badge>
-                            )}
+                            <Badge variant="outline" className="text-xs">
+                              {data.count} transactions
+                            </Badge>
                           </div>
-                          <span className="font-medium">${amount.toLocaleString()}</span>
+                          <span className="font-medium">${data.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                      )
-                    })}
+                      ))}
+                    {Object.keys(expenseTotals).length === 0 && (
+                      <p className="text-sm text-muted-foreground italic">No expense transactions found</p>
+                    )}
                     <div className="flex justify-between font-semibold border-t pt-2">
                       <span>Total Operating Expenses</span>
-                      <span className="text-red-600">${totalExpenses.toLocaleString()}</span>
+                      <span className="text-red-600">${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   </div>
                 </div>
@@ -277,11 +319,14 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
                 {/* Net Income */}
                 <div className="bg-primary/10 p-4 rounded-lg">
                   <div className="flex justify-between font-bold text-xl">
-                    <span>Net Income</span>
+                    <span>Net Income (before SE Tax)</span>
                     <span className={netIncome >= 0 ? "text-green-600" : "text-red-600"}>
-                      ${netIncome.toLocaleString()}
+                      ${netIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    SE Tax ≈ ${(netIncome * 0.9235 * 0.153).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} • Net after SE Tax ≈ ${(netIncome - netIncome * 0.9235 * 0.153).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </p>
                 </div>
               </div>
             </CardContent>

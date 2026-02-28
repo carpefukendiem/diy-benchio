@@ -18,7 +18,7 @@ import { TransactionReview } from "@/components/transaction-review"
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card"
+  accountType: "bank" | "credit_card" | "personal" | "investment"
   month: string
   year: string
   fileName: string
@@ -50,14 +50,14 @@ const MONTHS = [
 
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
-  const [accountType, setAccountType] = useState<"bank" | "credit_card">("bank")
+  const [accountType, setAccountType] = useState<"bank" | "credit_card" | "personal" | "investment">("bank")
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
   const [pendingReview, setPendingReview] = useState<{
     transactions: any[]
     accountName: string
-    accountType: "bank" | "credit_card"
+    accountType: "bank" | "credit_card" | "personal" | "investment"
     files: Array<{ fileName: string; month: string; year: string; transactions: any[] }>
   } | null>(null)
   const { toast } = useToast()
@@ -227,9 +227,22 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   const handleApproveTransactions = (transactions: any[]) => {
     if (!pendingReview) return
 
+    // Auto-tag personal and investment account transactions so they're excluded from tax calcs
+    const isPersonalAccount = pendingReview.accountType === "personal"
+    const isInvestmentAccount = pendingReview.accountType === "investment"
+    const taggedTransactions = transactions.map((t) => {
+      if (isPersonalAccount) {
+        return { ...t, category: "Personal Expense", isIncome: false, isPersonal: true }
+      }
+      if (isInvestmentAccount) {
+        return { ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }
+      }
+      return t
+    })
+
     const statementsByMonth = new Map<string, any[]>()
 
-    transactions.forEach((transaction) => {
+    taggedTransactions.forEach((transaction) => {
       const key = `${transaction.date.substring(0, 7)}` // YYYY-MM format
       if (!statementsByMonth.has(key)) {
         statementsByMonth.set(key, [])
@@ -416,10 +429,17 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank">Bank Account</SelectItem>
-                    <SelectItem value="credit_card">Credit Card</SelectItem>
+                    <SelectItem value="bank">Business Bank Account</SelectItem>
+                    <SelectItem value="credit_card">Business Credit Card</SelectItem>
+                    <SelectItem value="personal">Personal Account (auto-excluded from taxes)</SelectItem>
+                    <SelectItem value="investment">Investment / Brokerage (auto-excluded from taxes)</SelectItem>
                   </SelectContent>
                 </Select>
+                {(accountType === "personal" || accountType === "investment") && (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
+                    All transactions from this account will be automatically marked as personal and excluded from your tax calculations.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -505,7 +525,16 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                 <div key={accountName} className="space-y-3">
                   <div className="flex items-center gap-2">
                     <h3 className="font-semibold">{accountName}</h3>
-                    <Badge variant="outline">{statements[0].accountType === "bank" ? "Bank" : "Credit Card"}</Badge>
+                    <Badge variant="outline">
+                      {statements[0].accountType === "bank" ? "Business Bank" :
+                       statements[0].accountType === "credit_card" ? "Credit Card" :
+                       statements[0].accountType === "investment" ? "Investment" : "Personal"}
+                    </Badge>
+                    {(statements[0].accountType === "personal" || statements[0].accountType === "investment") && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-700 border-amber-300">
+                        Excluded from taxes
+                      </Badge>
+                    )}
                     <Badge>
                       {statements.length} {statements.length === 1 ? "month" : "months"}
                     </Badge>

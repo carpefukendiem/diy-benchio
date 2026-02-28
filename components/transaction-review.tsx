@@ -30,25 +30,48 @@ interface TransactionReviewProps {
 }
 
 const CATEGORIES = [
+  // === INCOME ===
   "Sales Revenue",
+  "Freelance Income",
   "Interest Income",
   "Other Income",
-  "Returns & Allowances",
-  "Cost of Service",
+  "Refunds Given",
+  // === BUSINESS EXPENSES ===
+  "Advertising & Marketing",
+  "Social Media & Online Presence",
   "Software & Web Hosting Expense",
+  "Education & Training",
   "Business Meals Expense",
   "Gas & Auto Expense",
   "Bank & ATM Fee Expense",
   "Insurance Expense - Auto",
   "Insurance Expense - Business",
-  "Merchant Fees Expense",
-  "Office Supply Expense",
+  "Merchant Processing Fees",
+  "Office Supplies",
   "Phone & Internet Expense",
   "Professional Service Expense",
+  "Tax Software & Services",
   "Rent Expense",
   "Utilities Expense",
+  "Waste & Sanitation Expense",
+  "Home Improvement",
+  "Cost of Service",
+  // === TRANSFERS ===
   "Member Drawing - Ruben Ruiz",
   "Member Contribution - Ruben Ruiz",
+  "Internal Transfer",
+  "Credit Card Payment",
+  "Zelle / Venmo Transfer",
+  // === PERSONAL (excluded from taxes) ===
+  "Personal Expense",
+  "Personal - Groceries",
+  "Personal - Entertainment",
+  "Personal - Shopping",
+  "Personal - Food & Drink",
+  "Personal - Health",
+  "ATM Withdrawal",
+  "Crypto / Investments",
+  "Uncategorized Expense",
 ]
 
 export function TransactionReview({
@@ -72,7 +95,7 @@ export function TransactionReview({
 
     // Auto-update isIncome based on category
     if (field === "category") {
-      const revenueCategories = ["Sales Revenue", "Interest Income", "Other Income", "Member Contribution - Ruben Ruiz"]
+      const revenueCategories = ["Sales Revenue", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"]
       updated[index].isIncome = revenueCategories.includes(value)
     }
 
