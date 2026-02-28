@@ -413,6 +413,8 @@ export default function CaliforniaBusinessAccounting() {
     // Classify every non-income transaction
     const personalKeywords = ["personal", "crypto"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
+    // Capital/balance-sheet items -- not Schedule C deductions
+    const capitalKeywords = ["business loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
     // Above-the-line deductions (Schedule 1) -- deducted from AGI, NOT Schedule C
     const aboveTheLineCategories = ["health insurance", "sep-ira"]
 
@@ -426,6 +428,7 @@ export default function CaliforniaBusinessAccounting() {
       if (!cl || cl.includes("uncategorized")) return
       if (personalKeywords.some(k => cl.includes(k))) return
       if (transferKeywords.some(k => cl.includes(k))) return
+      if (capitalKeywords.some(k => cl.includes(k))) return
       // Separate above-the-line deductions
       if (cl.includes("health insurance")) { healthInsuranceTotal += t.amount; return }
       if (cl.includes("sep-ira")) { sepIraTotal += t.amount; return }
