@@ -80,6 +80,17 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "Loan Interest Expense": { line: "16b", label: "Interest expense (deductible)" },
   // Crypto treasury purchase — capital asset, cost basis tracked separately
   "Crypto Treasury Purchase": { line: "N/A", label: "Capital asset purchase -- not expense (track cost basis)" },
+  // --- HAIR STYLIST / SALON PROFESSIONAL ---
+  "Service Income": { line: "1", label: "Gross receipts or sales (services)" },
+  "Booth Rental Expense": { line: "20b", label: "Rent or lease (other business property)" },
+  "Hair Products & Color": { line: "22", label: "Supplies (color, shampoo, treatments)" },
+  "Styling Tools & Equipment": { line: "22", label: "Supplies (tools under $2,500) / Line 13 if depreciating" },
+  "Disposable Supplies": { line: "22", label: "Supplies (foils, gloves, capes, neck strips)" },
+  "Booking & Payment Software": { line: "27a", label: "Other expenses (Vagaro, GlossGenius, StyleSeat, Booksy)" },
+  "Laundry & Cleaning": { line: "27a", label: "Other expenses (towel service, cape laundering)" },
+  "Cosmetology License & Permits": { line: "23", label: "Taxes and licenses (CA Board renewal, city permit)" },
+  "Professional Liability Insurance": { line: "15", label: "Insurance (stylist/salon liability -- not health)" },
+  "Retail Product Sales COGS": { line: "4", label: "Cost of goods sold (retail products for resale)" },
 }
 
 export function InteractiveReports({ transactions, onUpdateTransaction, dateRange, businessName = "My Business" }: InteractiveReportsProps) {
@@ -114,7 +125,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
 
     const personalKeywords = ["personal", "crypto / investments"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
-    const cogsKeywords = ["cost of service", "cost of goods"]
+    const cogsKeywords = ["cost of service", "cost of goods", " cogs"]
     const aboveLineKeywords = ["health insurance", "sep-ira"]
     const nondeductibleKeywords = ["nondeductible"]
     const returnsKeywords = ["returns & allowances", "refunds given"]
