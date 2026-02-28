@@ -819,6 +819,7 @@ export default function CaliforniaBusinessAccounting() {
                   <InteractiveReports
                     transactions={currentBusiness.transactions}
                     onUpdateTransaction={updateTransaction}
+                    businessName={currentBusiness.profile.businessName}
                     dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
                   />
                 </Suspense>

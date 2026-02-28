@@ -56,6 +56,11 @@ const CATEGORIES = [
   "Waste & Sanitation Expense",
   "Home Improvement",
   "Cost of Service",
+  // === LOANS / CAPITAL ITEMS ===
+  "Business Loan Proceeds",
+  "Loan Repayment - Principal",
+  "Loan Interest Expense",
+  "Crypto Treasury Purchase",
   // === TRANSFERS ===
   "Member Drawing - Ruben Ruiz",
   "Member Contribution - Ruben Ruiz",

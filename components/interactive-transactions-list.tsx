@@ -78,9 +78,13 @@ const CATEGORIES = [
   "Client Gifts",
   "Waste & Disposal",
   "SEP-IRA Contribution",
-  // --- Non-deductible ---
+  // --- Non-deductible / Capital items ---
   "Nondeductible Client Entertainment",
   "Business Treasury Investment",
+  "Crypto Treasury Purchase",
+  "Business Loan Proceeds",
+  "Loan Repayment - Principal",
+  "Loan Interest Expense",
   "Uncategorized Expense",
   // --- Transfers & Owner ---
   "Owner Draw",
