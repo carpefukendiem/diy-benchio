@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { EditableCell } from "@/components/editable-cell"
-import { RefreshCw, Search, Download, Edit3 } from "lucide-react"
+import { RefreshCw, Search, Download, Edit3, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 interface Transaction {
@@ -33,48 +33,71 @@ interface InteractiveTransactionsListProps {
 }
 
 const CATEGORIES = [
-  // === INCOME ===
+  // --- Income ---
   "Sales Revenue",
   "Freelance Income",
   "Interest Income",
   "Other Income",
+  "Returns & Allowances",
   "Refunds Given",
-  // === BUSINESS EXPENSES ===
+  // --- COGS ---
+  "Cost of Service",
+  // --- Operating Expenses (Schedule C lines 8-27) ---
   "Advertising & Marketing",
+  "Soccer Team Sponsorship",
   "Social Media & Online Presence",
-  "Software & Web Hosting Expense",
-  "Education & Training",
-  "Business Meals Expense",
-  "Gas & Auto Expense",
-  "Bank & ATM Fee Expense",
-  "Insurance Expense - Auto",
+  "Contract Labor",
+  "Equipment & Depreciation",
+  "Computer Equipment Expense",
   "Insurance Expense - Business",
+  "Insurance Expense - Auto",
+  "Health Insurance",
+  "Interest Expense",
+  "Bank & ATM Fee Expense",
+  "License & Fee Expense",
+  "California LLC Fee",
   "Merchant Processing Fees",
+  "Merchant Fees Expense",
   "Office Supplies",
+  "Office Supply Expense",
+  "Office Kitchen Supplies",
   "Phone & Internet Expense",
   "Professional Service Expense",
   "Tax Software & Services",
+  "Software & Web Hosting Expense",
   "Rent Expense",
   "Utilities Expense",
-  "Waste & Sanitation Expense",
-  "Home Improvement",
-  "Cost of Service",
-  // === TRANSFERS ===
+  "Business Meals Expense",
+  "Travel Expense",
+  "Gas & Auto Expense",
+  "Parking Expense",
+  "Postage & Shipping Expense",
+  "Education & Training",
+  "Home Office Expense",
+  "Eye Care - Business Expense",
+  "Client Gifts",
+  "Waste & Disposal",
+  "SEP-IRA Contribution",
+  // --- Non-deductible ---
+  "Nondeductible Client Entertainment",
+  "Business Treasury Investment",
+  "Uncategorized Expense",
+  // --- Transfers & Owner ---
+  "Owner Draw",
   "Member Drawing - Ruben Ruiz",
   "Member Contribution - Ruben Ruiz",
   "Internal Transfer",
   "Credit Card Payment",
+  "Brokerage Transfer",
   "Zelle / Venmo Transfer",
-  // === PERSONAL (excluded from taxes) ===
+  // --- Personal ---
   "Personal Expense",
   "Personal - Groceries",
   "Personal - Entertainment",
   "Personal - Shopping",
   "Personal - Food & Drink",
   "Personal - Health",
-  "ATM Withdrawal",
   "Crypto / Investments",
-  "Uncategorized Expense",
 ]
 
 export function InteractiveTransactionsList({
@@ -94,10 +117,14 @@ export function InteractiveTransactionsList({
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
-      const matchesSearch =
-        transaction.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        transaction.merchantName?.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesCategory = categoryFilter === "all" || transaction.category === categoryFilter
+      const sl = searchTerm.toLowerCase()
+      const matchesSearch = !searchTerm ||
+        transaction.description.toLowerCase().includes(sl) ||
+        transaction.merchantName?.toLowerCase().includes(sl) ||
+        transaction.category?.toLowerCase().includes(sl) ||
+        transaction.amount.toString().includes(searchTerm)
+      const matchesCategory = categoryFilter === "all" || 
+        (categoryFilter === "uncategorized" ? (!transaction.category || transaction.category === "Uncategorized Expense") : transaction.category === categoryFilter)
       const matchesAccount = accountFilter === "all" || transaction.account === accountFilter
       return matchesSearch && matchesCategory && matchesAccount
     })
@@ -194,6 +221,82 @@ export function InteractiveTransactionsList({
     a.click()
   }
 
+  const exportToPDF = async () => {
+    try {
+      const { default: jsPDF } = await import("jspdf")
+      const autoTable = (await import("jspdf-autotable")).default
+
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" })
+
+      // Title
+      doc.setFontSize(16)
+      doc.text("Transaction Report", 14, 15)
+      doc.setFontSize(9)
+      doc.setTextColor(100)
+      doc.text(`Generated: ${new Date().toLocaleDateString()} | ${filteredTransactions.length} transactions`, 14, 21)
+      doc.setTextColor(0)
+
+      // Summary
+      const totalIncome = filteredTransactions.filter(t => t.isIncome).reduce((s, t) => s + t.amount, 0)
+      const totalExpenses = filteredTransactions.filter(t => !t.isIncome).reduce((s, t) => s + t.amount, 0)
+      doc.setFontSize(10)
+      doc.text(`Total Income: $${totalIncome.toLocaleString("en", { minimumFractionDigits: 2 })}`, 14, 28)
+      doc.text(`Total Expenses: $${totalExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}`, 100, 28)
+      doc.text(`Net: $${(totalIncome - totalExpenses).toLocaleString("en", { minimumFractionDigits: 2 })}`, 200, 28)
+
+      // Table
+      const tableRows = filteredTransactions.map(t => [
+        t.date,
+        t.description.length > 40 ? t.description.substring(0, 40) + "..." : t.description,
+        t.merchantName || "",
+        `$${t.amount.toLocaleString("en", { minimumFractionDigits: 2 })}`,
+        t.category,
+        t.account,
+        t.isIncome ? "Income" : "Expense",
+      ])
+
+      autoTable(doc, {
+        startY: 33,
+        head: [["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type"]],
+        body: tableRows,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 7.5 },
+        columnStyles: {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 65 },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 25, halign: "right" },
+          4: { cellWidth: 40 },
+          5: { cellWidth: 30 },
+          6: { cellWidth: 18 },
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didParseCell: (data: any) => {
+          if (data.column.index === 6 && data.section === "body") {
+            data.cell.styles.textColor = data.cell.raw === "Income" ? [22, 163, 74] : [220, 38, 38]
+          }
+        },
+      })
+
+      // Footer
+      const pageCount = (doc as any).internal.getNumberOfPages()
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        doc.setFontSize(7)
+        doc.setTextColor(150)
+        doc.text(`DIY Bench.io | Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 7)
+      }
+
+      doc.save(`transactions-${new Date().toISOString().split("T")[0]}.pdf`)
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to export to PDF",
+        variant: "destructive",
+      })
+    }
+  }
+
   const exportToExcel = async () => {
     try {
       const response = await fetch("/api/export/excel", {
@@ -219,14 +322,25 @@ export function InteractiveTransactionsList({
     }
   }
 
+  const uncategorizedCount = useMemo(() => {
+    return transactions.filter(t => !t.category || t.category === "Uncategorized Expense" || t.category === "").length
+  }, [transactions])
+
   return (
     <Card>
       <CardHeader>
         <div className="flex justify-between items-center">
           <div>
-            <CardTitle>Live Transaction Editor</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Live Transaction Editor
+              {uncategorizedCount > 0 && (
+                <Badge variant="destructive" className="text-xs cursor-pointer" onClick={() => setCategoryFilter("uncategorized")}>
+                  {uncategorizedCount} uncategorized
+                </Badge>
+              )}
+            </CardTitle>
             <CardDescription>
-              Click any cell to edit • Select multiple for bulk actions ({filteredTransactions.length} transactions)
+              Click any cell to edit {"\u2022"} Select multiple for bulk actions ({filteredTransactions.length} transactions)
             </CardDescription>
           </div>
           <div className="flex gap-2">
@@ -237,6 +351,10 @@ export function InteractiveTransactionsList({
             <Button variant="outline" size="sm" onClick={exportToExcel}>
               <Download className="h-4 w-4 mr-2" />
               Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportToPDF}>
+              <FileText className="h-4 w-4 mr-2" />
+              PDF
             </Button>
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={isLoading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
@@ -266,6 +384,7 @@ export function InteractiveTransactionsList({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="uncategorized">⚠ Uncategorized Only</SelectItem>
                 {CATEGORIES.map((category) => (
                   <SelectItem key={category} value={category}>
                     {category}

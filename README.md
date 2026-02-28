@@ -24,11 +24,11 @@ Added backend engines that integrate with the existing v0 UI:
 
 ## Deploy
 
-```bash
+\`\`\`bash
 cp .env.local.example .env.local  # Fill in your keys
 pnpm install
 pnpm dev
-```
+\`\`\`
 
 ## Disclaimer
 For bookkeeping purposes only. Consult a CPA before filing.
