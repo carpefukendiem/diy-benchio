@@ -83,13 +83,39 @@ interface TaxProfile {
 
 // Debounced localStorage save — prevents lag from serializing on every keystroke
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let storageWarningShown = false
 function debouncedSave(key: string, value: any, delay = 500) {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     try {
-      localStorage.setItem(key, JSON.stringify(value))
-    } catch (e) {
+      const serialized = JSON.stringify(value)
+      // Warn if approaching 4MB (localStorage limit is ~5-10MB depending on browser)
+      if (serialized.length > 4_000_000 && !storageWarningShown) {
+        storageWarningShown = true
+        console.warn(`[storage] Data is ${(serialized.length / 1_000_000).toFixed(1)}MB — approaching localStorage limit. Consider removing old statements.`)
+      }
+      localStorage.setItem(key, serialized)
+    } catch (e: any) {
       console.warn("localStorage save failed:", e)
+      // QuotaExceededError — storage is full
+      if (e?.name === "QuotaExceededError" || e?.code === 22) {
+        console.error("[storage] localStorage full! Transactions may not persist across page reloads.")
+        // Attempt to save a trimmed version: keep only transaction metadata, not raw_line
+        try {
+          const trimmed = JSON.parse(JSON.stringify(value))
+          if (Array.isArray(trimmed)) {
+            trimmed.forEach((biz: any) => {
+              biz?.uploadedStatements?.forEach((stmt: any) => {
+                stmt?.transactions?.forEach((t: any) => { delete t.raw_line })
+              })
+            })
+          }
+          localStorage.setItem(key, JSON.stringify(trimmed))
+          console.log("[storage] Saved trimmed version (raw_line stripped)")
+        } catch (e2) {
+          console.error("[storage] Even trimmed save failed — too much data")
+        }
+      }
     }
   }, delay)
 }
