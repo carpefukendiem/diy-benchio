@@ -93,13 +93,19 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     // DUPLICATE FILE DETECTION
     // Check if any of the selected files were already uploaded
     // =============================================
+    // IMPORTANT: scope dedup keys to the SAME account only.
+    // Different accounts can legitimately have identical transactions
+    // (e.g., same vendor, same amount on the same day across cards).
+    // Using a cross-account key causes the second account's statements
+    // to be falsely rejected as duplicates after ~12 files.
     const existingFileKeys = new Set<string>()
-    existingStatements.forEach(s => {
-      // Build keys from existing statement transactions for matching
-      s.transactions.forEach(t => {
-        existingFileKeys.add(`${t.date}|${t.description}|${t.amount}`)
+    existingStatements
+      .filter(s => s.accountName === accountName)
+      .forEach(s => {
+        s.transactions.forEach(t => {
+          existingFileKeys.add(`${accountName}|${t.date}|${t.description}|${t.amount}`)
+        })
       })
-    })
 
     // Also track file names already uploaded (stored in localStorage)
     const uploadedFileNames: string[] = JSON.parse(localStorage.getItem("uploadedFileNames") || "[]")
@@ -198,7 +204,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             // Remove any transactions that already exist
             // =============================================
             const uniqueTransactions = data.transactions.filter((t: any) => {
-              const key = `${t.date}|${t.description}|${t.amount}`
+              const key = `${accountName}|${t.date}|${t.description}|${t.amount}`
               return !existingFileKeys.has(key)
             })
 
@@ -227,7 +233,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
             // Add new transactions to the existingFileKeys set so subsequent files in the same batch also get deduped
             uniqueTransactions.forEach((t: any) => {
-              existingFileKeys.add(`${t.date}|${t.description}|${t.amount}`)
+              existingFileKeys.add(`${accountName}|${t.date}|${t.description}|${t.amount}`)
             })
           } else {
             setFileProgress(prev => prev.map((p, idx) =>
