@@ -759,13 +759,15 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   // PERSONAL SHOPPING (0004-04)
   // ============================
-  { pattern: 'amazon', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.65 },
+  // Amazon defaults to Office Supplies (not personal) — user confirmed Amazon orders are business
+  { pattern: 'amazon', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.55 },
   { pattern: 'target', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.70 },
   { pattern: 'walmart', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.70 },
-  { pattern: 'best buy', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'best buy', match: 'contains', category_id: '00000000-0000-0000-0002-000000000046', is_personal: false, is_transfer: false, confidence: 0.75 },
   { pattern: 'ross stores', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'billabong', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.85 },
-  { pattern: 'blenders', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
+  { pattern: 'blenders me', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'blenders', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.75 },
   { pattern: 'marshalls', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'tj maxx', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'nordstrom', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
@@ -809,8 +811,45 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   // PERSONAL — MISC
   // ============================
-  { pattern: 'tradingview', match: 'contains', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: false, confidence: 0.90 },
+  // TradingView overridden to Software in HIGH_PRIORITY_PATTERNS; keep here as fallback
+  { pattern: 'tradingview', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'paypal', match: 'contains', category_id: '00000000-0000-0000-0004-000000000008', is_personal: false, is_transfer: true, confidence: 0.70 },
+
+  // ============================
+  // LOCAL SANTA BARBARA / USER-SPECIFIC MERCHANTS
+  // ============================
+  { pattern: "finney's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'finneys', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'jersey mikes', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: "jersey mike's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'jersey mike', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.88 },
+  { pattern: "jeannine's", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'jeannine', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'carls jr', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "carl's jr", match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'pressed - paseo', match: 'contains', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'pressed paseo', match: 'contains', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'santa cruz market', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'nothing bundt', match: 'contains', category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'find your feet', match: 'contains', category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: "see's candy", match: 'contains', category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'sees candy', match: 'contains', category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'craigslist', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'socalgas', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'scgc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'clean wave car', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'nyx*clean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'lemos feed', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'lemos pet', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'coinledger', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'smoke 4 less', match: 'contains', category_id: '00000000-0000-0000-0002-000000000035', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'ring basic plan', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
+  { pattern: 'ring.com', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'avenu tax', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'avenu', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'google*gsuite', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'gsuite', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.97 },
+  { pattern: 'google workspace', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.97 },
 
   // ============================
   // CATCH-ALL HEURISTIC PATTERNS (last resort before uncategorized)
@@ -900,6 +939,24 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'online transfer to ruiz r everyday checking', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
   { pattern: 'online transfer from ruiz r', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
   { pattern: 'chase credit crd', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+  // GHL / rankingsb — must beat generic "recurring payment" catch-all
+  { pattern: 'ranking sb', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'rankingsb', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'auto-recharge for agency', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'auto-recharge for wallet', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'automated recharge', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'messaging credits', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  // Home Depot ONLINE PMT = credit card payment, not home improvement
+  { pattern: 'home depot online pmt', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+  // Upwork Escrow via Chase — "TRANSFER Payment Escr Money Transf CA CARD7254"
+  { pattern: 'money transf', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'payment escr', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  // TradingView is software, not crypto
+  { pattern: 'tradingview', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'tradingviewv', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  // Prime Video = software/entertainment (personal entertainment, not Member Contribution)
+  { pattern: 'prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'amazon prime', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
 ];
 
 export function categorizeByRules(

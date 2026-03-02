@@ -114,10 +114,22 @@ function parseWFPDFText(text: string) {
     const dl = desc.toLowerCase()
     const isCr = creditKW.some(k => dl.includes(k))
 
+    // Wells Fargo overdraft fee: the description reads
+    // "Overdraft Fee for a Transaction Posted on MM/DD $AMOUNT..."
+    // where $AMOUNT is the transaction that triggered the overdraft, NOT the fee itself.
+    // WF charges a flat $35 overdraft fee. Use that instead.
+    let finalAmount = amount
+    let finalDesc = desc
+    if (dl.includes("overdraft fee for a transaction")) {
+      finalAmount = 35.00
+      // Trim the protected-transaction amount from desc for clarity
+      finalDesc = "Overdraft Fee"
+    }
+
     txns.push({
       date: `${year}-${mo}-${da}`,
-      description: desc.substring(0, 200),
-      amount,
+      description: finalDesc.substring(0, 200),
+      amount: finalAmount,
       type: isCr ? "credit" : "debit",
       raw_line: seg.substring(0, 200),
     })
@@ -161,7 +173,15 @@ function parseChasePDFText(text: string) {
     const desc = m[3].trim()
     const amount = parseFloat(m[5].replace(/,/g, ""))
     if (amount <= 0 || amount > 999999) continue
+
+    // Skip non-transaction lines: page headers, summary rows, account info
     if (/^(TOTAL|Year-to-date|Previous|New Balance|Payment Due|Account Number)/i.test(desc)) continue
+    // Skip Chase page header fragments (match long sequences of digits/codes from page layout)
+    if (/\d{8,}/.test(desc)) continue  // long numeric sequences = page reference codes
+    if (/^(Page\s+\d|Manage your|Customer Service|Download the|Mobile:|www\.)/i.test(desc)) continue
+    if (/BEX\s+\d/.test(desc)) continue  // Chase internal page codes like "BEX 9"
+    // Chase fee/interest summary rows that aren't real transactions
+    if (/^(Interest Charge|INTEREST CHARGE|Fees Charged|Balance Transfers|Cash Advances)/i.test(desc)) continue
 
     const isPayment = /payment/i.test(desc) && !/late/i.test(desc)
 
@@ -187,28 +207,65 @@ function parseBarclaysPDFText(text: string) {
     Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
   }
 
+  // Try to find statement period (closing date for year)
   const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  // Also try "Closing Date MM/DD/YYYY" or "Payment Due MM/DD/YYYY"
+  const closingMatch = text.match(/(?:Closing Date|Payment Due|Statement Date)\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
   let year = 2025
   let stmtMonth = "Unknown"
   if (periodMatch) {
     year = parseInt(periodMatch[6])
     if (year < 100) year += 2000
     stmtMonth = monthNames[parseInt(periodMatch[4]) - 1] || "Unknown"
+  } else if (closingMatch) {
+    year = parseInt(closingMatch[3])
+    if (year < 100) year += 2000
+    stmtMonth = monthNames[parseInt(closingMatch[1]) - 1] || "Unknown"
   }
 
   const txns: any[] = []
-  // Barclays format from pdfjs: "Dec 16 Dec 17 SQ *SWEET CREAMS SANTA BARBARA CA 42 $14.00"
-  const purchaseRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+(\d+)\s+\$?([\d,]+\.\d{2})/g
-  const paymentRe = /(\w{3})\s+(\d{1,2})\s+(\w{3})\s+(\d{1,2})\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})/g
 
-  // Payments
+  // Skip lines that are Barclays balance/summary lines, not transactions:
+  // "Statement Balance $3,958.92", "Available for cash advances $41.08",
+  // "Minimum Payment Due $...", page headers/footers
+  const isBalanceLine = (desc: string) => {
+    const d = desc.toLowerCase()
+    return d.includes('statement balance') ||
+           d.includes('available for cash') ||
+           d.includes('minimum payment') ||
+           d.includes('payment information') ||
+           d.includes('payment due') ||
+           d.includes('credit limit') ||
+           d.includes('available credit') ||
+           d.includes('overlimit') ||
+           d.includes('barclaysus.com') ||
+           d.includes('see inside') ||
+           d.includes('page ') ||
+           d.includes('visit barclays') ||
+           d.includes('grace period') ||
+           d.includes('promotional') ||
+           d.includes('manage your account') ||
+           d.includes('customer service') ||
+           d.includes('repayment information') ||
+           d.includes('new balance') ||
+           d.includes('previous balance') ||
+           d.length < 3
+  }
+
+  // Barclays PDF format from pdfjs-dist:
+  // Purchases: "Dec 16 Dec 17 MERCHANT NAME CITY STATE refNum $14.00"
+  // Payments:  "Dec 16 Dec 17 PAYMENT - THANK YOU N/A -$250.00"
+  const purchaseRe = /(\w{3})\s+(\d{1,2})\s+(?:\w{3}\s+\d{1,2}\s+)?(.+?)\s+(\d{5,}|\w{6,})\s+\$?([\d,]+\.\d{2})(?!\d)/g
+  const paymentRe = /(\w{3})\s+(\d{1,2})\s+(?:\w{3}\s+\d{1,2}\s+)?(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})/g
+
+  // Payments / credits
   let pm
   while ((pm = paymentRe.exec(text)) !== null) {
     const txMon = barclaysMonths[pm[1]] || "01"
     const txDay = pm[2]
-    const desc = pm[5].trim()
-    const amount = parseFloat(pm[6].replace(/,/g, ""))
-    if (amount > 0 && desc.length > 2) {
+    const desc = pm[3].trim()
+    const amount = parseFloat(pm[4].replace(/,/g, ""))
+    if (amount > 0 && !isBalanceLine(desc) && desc.length > 2) {
       txns.push({
         date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
         description: desc.substring(0, 200), amount, type: "credit", raw_line: pm[0],
@@ -221,14 +278,14 @@ function parseBarclaysPDFText(text: string) {
   while ((pr = purchaseRe.exec(text)) !== null) {
     const txMon = barclaysMonths[pr[1]] || "01"
     const txDay = pr[2]
-    const desc = pr[5].trim()
-    const amount = parseFloat(pr[7].replace(/,/g, ""))
-    if (amount > 0 && desc.length > 2 && !/^Total/i.test(desc)) {
-      // Skip if already added as a payment
-      const isDupe = txns.some(t => t.date === `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}` && t.amount === amount)
+    const desc = pr[3].trim()
+    const amount = parseFloat(pr[5].replace(/,/g, ""))
+    if (amount > 0 && !isBalanceLine(desc) && desc.length > 2 && !/^Total/i.test(desc)) {
+      const dateKey = `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`
+      const isDupe = txns.some(t => t.date === dateKey && Math.abs(t.amount - amount) < 0.01)
       if (!isDupe) {
         txns.push({
-          date: `${year}-${txMon}-${String(parseInt(txDay)).padStart(2, "0")}`,
+          date: dateKey,
           description: desc.substring(0, 200), amount, type: "debit", raw_line: pr[0],
         })
       }
