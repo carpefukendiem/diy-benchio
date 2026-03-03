@@ -124,27 +124,22 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
 
       try {
-        // Read ALL files on the FRONTEND as text.
-        // CSVs: read directly as text.
-        // PDFs: extract text using pdfjs-dist on the client, then send as text.
         const isPDF = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf"
 
+        // For PDFs: send raw bytes as base64 to the server.
+        // Server uses pdf-parse (Node.js, reliable) instead of pdfjs in the browser.
+        // For CSVs: send raw text as before.
         let fileContent: string
-
         if (isPDF) {
-          // Extract text from PDF on the frontend using unpdf
-          // unpdf bundles pdfjs with the worker inlined - no CDN fetch needed
-          const { extractText, getDocumentProxy } = await import("unpdf")
-
           const arrayBuffer = await file.arrayBuffer()
-          const pdf = await getDocumentProxy(new Uint8Array(arrayBuffer))
-          const { totalPages, text } = await extractText(pdf, { mergePages: true })
-
-          fileContent = typeof text === "string" ? text : (text as string[]).join("\n")
-          console.log(`[v0] Extracted PDF text on frontend: ${file.name}, pages=${totalPages}, textLength=${fileContent.length}`)
+          const bytes = new Uint8Array(arrayBuffer)
+          let binary = ""
+          for (let b = 0; b < bytes.byteLength; b++) binary += String.fromCharCode(bytes[b])
+          fileContent = btoa(binary)
+          console.log(`[upload] Sending PDF as base64: ${file.name}, size=${file.size}`)
         } else {
           fileContent = await file.text()
-          console.log(`[v0] Read CSV on frontend: ${file.name}, textLength=${fileContent.length}`)
+          console.log(`[upload] Sending CSV as text: ${file.name}, length=${fileContent.length}`)
         }
 
         const response = await fetch("/api/statements/upload", {

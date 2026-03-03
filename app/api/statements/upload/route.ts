@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { categorizeByRules } from "@/lib/categorization/rules-engine"
+import pdfParse from "pdf-parse"
 
 // Route segment config for Next.js App Router
 export const maxDuration = 30
@@ -66,156 +67,238 @@ function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" 
 }
 
 // ========================================
-// Parse Wells Fargo PDF text (extracted by pdfjs-dist on frontend)
+// Parse Wells Fargo bank statement PDF text
+//
+// pdf-parse format (verified against real statements):
+// Header:  "January 31, 2025         Page 1 of 6"
+// Txn line example (multi-line, amounts in separate columns):
+//   "1/2   Stripe Transfer St-J1A4W0L7G7I9 Ruben Ruiz  301.75          \n"  (credit)
+//   "1/2   Recurring Payment authorized on 01/01 Google *Gsuite_Ran\nCC@Google.Com CA ...  \n   7.20       \n"  (debit)
+//
+// Lines starting with M/D are transaction dates.
+// Amount columns: credits appear before debits, then ending balance.
+// We reassemble multi-line transactions (description wraps) then parse amounts.
 // ========================================
 function parseWFPDFText(text: string) {
   const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","purchase return","refund","overdraft protection from","instant pmt from","deposit"]
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
-  // Extract year from text
+  // Year from header: "January 31, 2025" or "December 31, 2025"
   const yearMatch = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(\d{4})/)
-  const year = yearMatch ? parseInt(yearMatch[1]) : 2025
+  const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear()
 
-  // pdfjs-dist joins text with spaces, so we look for date patterns M/D or M/DD
   const txns: any[] = []
 
-  // Split on date patterns to find transactions
-  // Pattern: M/D or M/DD followed by description and amount
-  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
+  // Split text into lines; group into transaction blocks.
+  // A transaction starts with "M/D   " (date pattern at start of line).
+  // Subsequent lines with no date but containing description/amounts belong to same txn.
+  const lines = text.split("\n")
 
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]
-    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+)/)
-    if (!m) continue
+  interface WFTxn { date: string; descParts: string[]; amounts: number[] }
+  let current: WFTxn | null = null
 
-    const mo = m[1].padStart(2, "0")
-    const da = m[2].padStart(2, "0")
-    const rest = m[3]
-
-    // Extract amounts (dollar figures with decimals)
-    const amtMatches = rest.match(/[\d,]+\.\d{2}/g)
-    if (!amtMatches || amtMatches.length === 0) continue
-
-    const amount = parseFloat(amtMatches[0].replace(/,/g, ""))
-    if (amount <= 0 || amount > 999999) continue
-
-    // Get description: everything before the first amount
-    const firstAmtIdx = rest.indexOf(amtMatches[0])
-    let desc = rest.substring(0, firstAmtIdx).trim()
-
-    // Clean up description
-    desc = desc.replace(/Purchase authorized on \d{2}\/\d{2}\s*/i, "")
-      .replace(/Recurring Payment authorized on \d{2}\/\d{2}\s*/i, "")
-      .replace(/Recurring Payment -?\s*/i, "")
+  const flushCurrent = () => {
+    if (!current) return
+    const desc = current.descParts
+      .join(" ")
+      .replace(/Purchase authorized on \d{2}\/\d{2}\s*/gi, "")
+      .replace(/Recurring Payment authorized on \d{2}\/\d{2}\s*/gi, "")
+      .replace(/Recurring Payment -?\s*/gi, "")
+      .replace(/Purchase with Cash Back \$?\d*\.?\d* authorized on \d{2}\/\d{2}\s*/gi, "")
       .replace(/\s+/g, " ").trim()
 
-    if (desc.length < 2 || /^(Date|Ending daily|Beginning balance|Ending balance|Totals|Monthly service)/i.test(desc)) continue
+    if (desc.length < 2) return
+    if (/^(Date|Check|Number|Description|Deposits|Withdrawals|Credits|Debits|Ending daily|Beginning balance|Ending balance|Totals|Monthly service fee|Other fees|Transaction history)/i.test(desc)) return
 
+    // Amounts: first non-zero is credit or debit. WF format: credit then debit then balance.
+    // We use keyword heuristic to determine credit vs debit.
     const dl = desc.toLowerCase()
     const isCr = creditKW.some(k => dl.includes(k))
+    const amount = current.amounts.find(a => a > 0) || 0
+    if (amount <= 0 || amount > 999999) return
 
-    // Wells Fargo overdraft fee: the description reads
-    // "Overdraft Fee for a Transaction Posted on MM/DD $AMOUNT..."
-    // where $AMOUNT is the transaction that triggered the overdraft, NOT the fee itself.
-    // WF charges a flat $35 overdraft fee. Use that instead.
     let finalAmount = amount
     let finalDesc = desc
+    // WF overdraft fee shows the protected transaction amount, not the $35 fee
     if (dl.includes("overdraft fee for a transaction")) {
       finalAmount = 35.00
-      // Trim the protected-transaction amount from desc for clarity
       finalDesc = "Overdraft Fee"
     }
 
     txns.push({
-      date: `${year}-${mo}-${da}`,
+      date: current.date,
       description: finalDesc.substring(0, 200),
       amount: finalAmount,
       type: isCr ? "credit" : "debit",
-      raw_line: seg.substring(0, 200),
+      raw_line: current.descParts[0]?.substring(0, 200) || "",
     })
   }
 
-  // Determine statement month
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+    // New transaction: line starts with M/D date pattern
+    const dateM = line.match(/^(\d{1,2})\/(\d{1,2})\s{1,5}(.*)/)
+    if (dateM) {
+      flushCurrent()
+      const mo = dateM[1].padStart(2, "0")
+      const da = dateM[2].padStart(2, "0")
+      const rest = dateM[3].trim()
+      // Extract amounts from this line
+      const amtMatches = rest.match(/[\d,]+\.\d{2}/g) || []
+      const amounts = amtMatches.map(a => parseFloat(a.replace(/,/g, ""))).filter(a => a > 0)
+      // Description: everything before the first amount
+      const descPart = amtMatches.length > 0
+        ? rest.substring(0, rest.indexOf(amtMatches[0])).trim()
+        : rest.trim()
+      current = { date: `${year}-${mo}-${da}`, descParts: descPart ? [descPart] : [], amounts }
+    } else if (current) {
+      // Continuation line
+      const trimmed = line.trim()
+      if (!trimmed) return
+      const amtMatches = trimmed.match(/^[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})*$/)
+      if (amtMatches) {
+        // Pure amount line
+        const nums = trimmed.match(/[\d,]+\.\d{2}/g) || []
+        nums.forEach(n => { const v = parseFloat(n.replace(/,/g, "")); if (v > 0) current!.amounts.push(v) })
+      } else {
+        // Description continuation — strip trailing amounts first
+        const cleaned = trimmed.replace(/\s+[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})*\s*$/, "").trim()
+        if (cleaned.length > 1 && cleaned.length < 200) current.descParts.push(cleaned)
+        // Still grab any amounts on this line
+        const lineAmts = trimmed.match(/[\d,]+\.\d{2}/g) || []
+        lineAmts.forEach(n => { const v = parseFloat(n.replace(/,/g, "")); if (v > 0 && !current!.amounts.includes(v)) current!.amounts.push(v) })
+      }
+    }
+  }
+  flushCurrent()
+
+  // Determine statement month from most common transaction month
   const monthCounts: Record<string, number> = {}
   txns.forEach(t => { const m = t.date.substring(5, 7); monthCounts[m] = (monthCounts[m] || 0) + 1 })
   const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
 
-  console.log(`[wf-pdf] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+  console.log(`[wf-pdf] Parsed ${txns.length} transactions, top month: ${topMonth}, year: ${year}`)
   return { transactions: txns, statementMonth: monthNames[parseInt(topMonth) - 1] || "Unknown", statementYear: String(year) }
 }
 
 // ========================================
 // Parse Chase credit card PDF text
+//
+// pdf-parse format (verified against real statements):
+// Transactions section starts with "Transaction\nMerchant  Name or Transaction Description$ Amount\n"
+// Each transaction line: "MM/DD     DESCRIPTION<amount>" (no space before amount)
+// Payment line: "01/03     Payment Thank You - Web-250.00" (negative = credit)
+// Purchase line: "12/14     STAPLES       00108894 GOLETA CA31.53"
+// Fee line: "02/12     LATE FEE40.00"
+// Interest: "02/14     PURCHASE INTEREST CHARGE144.21"
+// Summary rows: "TOTAL FEES FOR THIS PERIOD$40.00", "TOTAL INTEREST..."
 // ========================================
 function parseChasePDFText(text: string) {
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-  const yearMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
 
-  let year = 2025
+  // Chase statements don't have a clear year in header; derive from transaction dates
+  // Most statements span Dec-Jan or are within one year; default to current year
+  let year = new Date().getFullYear()
   let stmtMonth = "Unknown"
-  if (yearMatch) {
-    year = parseInt(yearMatch[6])
-    if (year < 100) year += 2000
-    stmtMonth = monthNames[parseInt(yearMatch[4]) - 1] || "Unknown"
-  }
 
   const txns: any[] = []
-  // Chase format from pdfjs: "10/15 MERCHANT NAME 10.86"
-  const segments = text.split(/(?=\b(\d{1,2})\/(\d{1,2})\b)/)
 
-  for (const seg of segments) {
-    const m = seg.match(/^(\d{1,2})\/(\d{1,2})\s+(.+?)(\s+)([\d,]+\.\d{2})/)
+  // Find the transaction section
+  const txnSectionIdx = text.indexOf("Merchant  Name or Transaction Description")
+  if (txnSectionIdx === -1) {
+    console.log("[chase-pdf] No transaction section found")
+    return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
+  }
+
+  const txnText = text.substring(txnSectionIdx)
+  const lines = txnText.split("\n")
+
+  // Each transaction line: "MM/DD     DESCRIPTION<amount>" where amount has no preceding space
+  // Negative amounts = credits (payments), positive = debits (charges)
+  // Pattern: MM/DD followed by spaces, then description ending with a number (possibly negative)
+  const TXN_LINE_RE = /^(\d{2})\/(\d{2})\s{3,}(.+?)(-?[\d,]+\.\d{2})$/
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    // Skip summary rows
+    if (/^(TOTAL |Year-to-date|Total fees|Total interest|Your\s+is|Purchases|Cash Advances|Balance Transfers|\(v\)|\(d\))/i.test(trimmed)) continue
+
+    const m = trimmed.match(TXN_LINE_RE)
     if (!m) continue
 
     const mo = parseInt(m[1]), da = parseInt(m[2])
     if (mo < 1 || mo > 12 || da < 1 || da > 31) continue
 
-    const desc = m[3].trim()
-    const amount = parseFloat(m[5].replace(/,/g, ""))
+    let desc = m[3].replace(/\s{2,}/g, " ").trim()
+    const rawAmt = parseFloat(m[4].replace(/,/g, ""))
+    const amount = Math.abs(rawAmt)
+    const isCredit = rawAmt < 0  // negative = payment/credit
+
     if (amount <= 0 || amount > 999999) continue
+    if (desc.length < 2) continue
 
-    // Skip non-transaction lines: page headers, summary rows, account info
-    if (/^(TOTAL|Year-to-date|Previous|New Balance|Payment Due|Account Number)/i.test(desc)) continue
-    // Skip Chase page header fragments (match long sequences of digits/codes from page layout)
-    if (/\d{8,}/.test(desc)) continue  // long numeric sequences = page reference codes
-    if (/^(Page\s+\d|Manage your|Customer Service|Download the|Mobile:|www\.)/i.test(desc)) continue
-    if (/BEX\s+\d/.test(desc)) continue  // Chase internal page codes like "BEX 9"
-    // Chase fee/interest summary rows that aren't real transactions
-    if (/^(Interest Charge|INTEREST CHARGE|Fees Charged|Balance Transfers|Cash Advances)/i.test(desc)) continue
+    // Skip interest/fee summary rows embedded in transactions
+    if (/^(Interest Charge|INTEREST CHARGE|Fees Charged|TOTAL FEES|TOTAL INTEREST)/i.test(desc)) continue
 
-    const isPayment = /payment/i.test(desc) && !/late/i.test(desc)
-
+    // Determine year: if we're in Jan-Feb and see Dec transactions, they're prior year
+    // Use the statement's most recent month to anchor the year
     txns.push({
       date: `${year}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`,
       description: desc.substring(0, 200),
       amount,
-      type: isPayment ? "credit" : "debit",
-      raw_line: seg.substring(0, 200),
+      type: isCredit ? "credit" : "debit",
+      raw_line: trimmed.substring(0, 200),
     })
   }
 
-  console.log(`[chase-pdf] Parsed ${txns.length} transactions`)
+  // Determine statement month from most common transaction month
+  const monthCounts: Record<string, number> = {}
+  txns.forEach(t => { const mo = t.date.substring(5, 7); monthCounts[mo] = (monthCounts[mo] || 0) + 1 })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  stmtMonth = monthNames[parseInt(topMonth) - 1] || "Unknown"
+
+  // Fix year for transactions in the minority month that cross year boundary
+  // e.g. statement mostly in Jan 2025 but has Dec 2024 transactions
+  if (txns.length > 0) {
+    const monthNums = txns.map(t => parseInt(t.date.substring(5, 7)))
+    const maxMonth = Math.max(...monthNums)
+    const minMonth = Math.min(...monthNums)
+    // If we span Dec->Jan boundary, Dec txns should be prior year
+    if (maxMonth === 12 && minMonth === 1) {
+      txns.forEach(t => {
+        if (parseInt(t.date.substring(5, 7)) === 12) {
+          t.date = `${year - 1}-${t.date.substring(5)}`
+        }
+      })
+    }
+  }
+
+  console.log(`[chase-pdf] Parsed ${txns.length} transactions, month=${stmtMonth}, year=${year}`)
   return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
 }
 
 // ========================================
 // Parse Barclays credit card PDF text
 //
-// Real format from pdfjs-dist mergePages:true (verified against actual statements):
+// Exact format produced by pdf-parse (server-side, verified against real statements):
 //
-// Purchase:  "Jun 16 Jun 17 VERCEL INC. COVINA CA 30 $30.00"
-//            "Apr 20 Apr 21 Prime Video Channels amzn.com/bill WA 6 $5.99"
-// Payment:   "Dec 02 Dec 02 Payment Received WELLS FARGO B N/A -$150.00"
-// Fee:       "Dec 05 Dec 05 LATE PAYMENT FEE $40.00"
-// Interest:  "Dec 08 Dec 08 INTEREST CHARGE-PB PURCHASE $50.67"
-//            "Dec 08 Dec 08 Interest Charge On Purchases $11.39"
+// Header:    "Statement Balance as of 05/08/25:  (account ending 2163)\n$4,059.94"
+//            Payment Due Date is on the NEXT LINE after "Payment Due Date:\n"
+//
+// Transaction lines (NO spaces between date columns — pdf-parse joins them):
+// Payment:   "Apr 14Apr 14Payment Received WELLS FARGO BN/A-$242.77"
+// Purchase:  "Apr 19Apr 20SQ *PANINO GOLETA Goleta CA99$32.95"
+//            "Apr 20Apr 21Prime Video Channels amzn.com/bill WA6$5.99"
+// Fee:       "Aug 05Aug 05LATE PAYMENT FEE$40.00"
+// Interest:  "Aug 08Aug 08INTEREST CHARGE-PB PURCHASE$55.34"
+//            "Aug 08Aug 08Interest Charge On Purchases$9.94"
 //
 // Key observations:
-// - Each transaction is on its own LINE (pdfjs preserves newlines)
-// - Purchases end with: <points_int>  $<amount>
-// - Payments end with:  N/A  -$<amount>
-// - Fees/interest end with: just $<amount> (no points)
-// - Statement period is in header: "Statement Period MM/DD/YY - MM/DD/YY"
+// - Transaction date + posting date are concatenated: "Apr 14Apr 14"
+// - N/A for payments, no separator: "...WELLS FARGO BN/A-$242.77"
+// - Points immediately before $: "...Goleta CA99$32.95"
+// - Fees have no points column: "...LATE PAYMENT FEE$40.00"
 // ========================================
 function parseBarclaysPDFText(text: string) {
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
@@ -223,95 +306,70 @@ function parseBarclaysPDFText(text: string) {
     Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
   }
 
-  // Extract year and statement month from header
-  // "Statement Period 11/09/25 - 12/08/25" → year=2025, stmtMonth=December
-  // Also handles "Statement Balance as of 12/08/25"
-  const periodMatch = text.match(/Statement Period\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*[-–]\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  // ---- Extract statement closing date for year + month label ----
+  // pdf-parse format: "Statement Balance as of 05/08/25:  (account ending..."
+  // This is the most reliable date — always present, always the closing date.
+  // Avoid "Payment Due Date" which can be next year (e.g. 01/05/26 for December stmt).
   const balanceMatch = text.match(/Statement Balance as of\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  let year = 2025
+  let year = new Date().getFullYear()
   let stmtMonth = "Unknown"
 
-  if (periodMatch) {
-    // Use the closing (end) date for month label
-    year = parseInt(periodMatch[6]); if (year < 100) year += 2000
-    stmtMonth = monthNames[parseInt(periodMatch[4]) - 1] || "Unknown"
-  } else if (balanceMatch) {
+  if (balanceMatch) {
     year = parseInt(balanceMatch[3]); if (year < 100) year += 2000
     stmtMonth = monthNames[parseInt(balanceMatch[1]) - 1] || "Unknown"
   }
 
+  // ---- Parse transaction lines ----
+  // pdf-parse joins date columns without spaces: "Apr 14Apr 14Description..."
+  // Pattern: Mon DD repeated twice, then description + amount
+  // We match each line against three patterns (payment, purchase, fee/interest)
+
   const txns: any[] = []
 
-  // Split into lines and process each one
-  const lines = text.split("\n")
+  // Regex: two adjacent "Mon DD" groups (no space between them as pdf-parse concatenates)
+  // then the description, then the amount suffix
+  //
+  // Payment:  Mon DD Mon DD <desc> N/A -$<amt>   (credit)
+  // Purchase: Mon DD Mon DD <desc> <1-4digit points> $<amt>  (debit)
+  // Fee/Int:  Mon DD Mon DD <desc> $<amt>   (debit, no points)
+  //
+  // The key insight: N/A appears BEFORE the amount for payments,
+  // and a small integer (points) appears BEFORE $ for purchases.
 
-  // Skip-list for non-transaction lines
-  const skipLine = (line: string) => {
-    const d = line.toLowerCase().trim()
-    if (d.length < 5) return true
-    if (/^(total |no transaction|no payment|no fees|to see activity|purchase activity for|2025 year|this year-to-date|interest charge calc|type of balance|standard|prior standard|balance transfer|cash advance|visit barclays|page \d|stay connected|download the|barclays view|payment coupon|ways to pay|make check|po box|ruben ruiz|amount enclosed|payment information|repayment information|change of address|minimum payment warning|late payment warning|if you make|if you would|what to do|credit bureau|transaction date posting date)/i.test(d)) return true
-    return false
-  }
+  const TXN_RE = /([A-Z][a-z]{2})\s{0,1}(\d{1,2})([A-Z][a-z]{2})\s{0,1}\d{1,2}(.+?)(?:(N\/A)-?\$?([\d,]+\.\d{2})|(\d{1,4})\$?([\d,]+\.\d{2})|\$?([\d,]+\.\d{2}))$/gm
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (skipLine(line)) continue
+  let m
+  while ((m = TXN_RE.exec(text)) !== null) {
+    const txMonAbbr = m[1]
+    const txDay = String(parseInt(m[2])).padStart(2, "0")
+    const txMon = barclaysMonths[txMonAbbr] || "01"
+    let desc = (m[4] || "").trim()
 
-    // ---- PAYMENT line: "Mon DD Mon DD Description N/A -$amount"
-    //                 or "Mon DD Mon DD Description N/A $amount"
-    const payRe = /^([A-Z][a-z]{2})\s+(\d{1,2})\s+[A-Z][a-z]{2}\s+\d{1,2}\s+(.+?)\s+N\/A\s+-?\$?([\d,]+\.\d{2})\s*$/
-    const payM = line.match(payRe)
-    if (payM) {
-      const txMon = barclaysMonths[payM[1]] || "01"
-      const txDay = String(parseInt(payM[2])).padStart(2, "0")
-      const desc = payM[3].trim()
-      const amount = parseFloat(payM[4].replace(/,/g, ""))
-      if (amount > 0 && desc.length > 2) {
-        txns.push({
-          date: `${year}-${txMon}-${txDay}`,
-          description: desc.substring(0, 200), amount, type: "credit", raw_line: line,
-        })
+    // Skip non-transaction lines
+    if (!desc || desc.length < 3) continue
+    if (/^(total|no transaction|no payment|no fees|to see activity|purchase activity|2\d{3} year|this year|interest charge calc|type of balance|standard purchase|prior standard|balance transfer|cash advance|visit barclays|page \d|transaction date)/i.test(desc)) continue
+
+    const date = `${year}-${txMon}-${txDay}`
+
+    if (m[5] === "N/A") {
+      // Payment / credit
+      const amount = parseFloat(m[6].replace(/,/g, ""))
+      if (amount > 0) {
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "credit", raw_line: m[0].trim() })
       }
-      continue
-    }
-
-    // ---- PURCHASE line: "Mon DD Mon DD Description <points> $amount"
-    // Points is a small integer (1-999), amount is $XX.XX
-    const purchRe = /^([A-Z][a-z]{2})\s+(\d{1,2})\s+[A-Z][a-z]{2}\s+\d{1,2}\s+(.+?)\s+(\d{1,3})\s+\$?([\d,]+\.\d{2})\s*$/
-    const purchM = line.match(purchRe)
-    if (purchM) {
-      const txMon = barclaysMonths[purchM[1]] || "01"
-      const txDay = String(parseInt(purchM[2])).padStart(2, "0")
-      const desc = purchM[3].trim()
-      const amount = parseFloat(purchM[5].replace(/,/g, ""))
-      if (amount > 0 && desc.length > 2) {
-        txns.push({
-          date: `${year}-${txMon}-${txDay}`,
-          description: desc.substring(0, 200), amount, type: "debit", raw_line: line,
-        })
+    } else if (m[7] !== undefined) {
+      // Purchase — has points integer before $
+      const amount = parseFloat(m[8].replace(/,/g, ""))
+      if (amount > 0) {
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: m[0].trim() })
       }
-      continue
-    }
-
-    // ---- FEE / INTEREST line: "Mon DD Mon DD Description $amount"
-    // (no points column, no N/A — just ends with $amount)
-    const feeRe = /^([A-Z][a-z]{2})\s+(\d{1,2})\s+[A-Z][a-z]{2}\s+\d{1,2}\s+(.+?)\s+\$?([\d,]+\.\d{2})\s*$/
-    const feeM = line.match(feeRe)
-    if (feeM) {
-      const txMon = barclaysMonths[feeM[1]] || "01"
-      const txDay = String(parseInt(feeM[2])).padStart(2, "0")
-      const desc = feeM[3].trim()
-      const amount = parseFloat(feeM[4].replace(/,/g, ""))
-      // Only include actual fees/interest — skip summary rows
-      if (amount > 0 && desc.length > 2 &&
-          /fee|interest charge|late payment/i.test(desc) &&
-          !/^total|^2025|^this year/i.test(desc)) {
-        txns.push({
-          date: `${year}-${txMon}-${txDay}`,
-          description: desc.substring(0, 200), amount, type: "debit", raw_line: line,
-        })
+    } else if (m[9] !== undefined) {
+      // Fee or interest — no points, just $amount directly
+      const amount = parseFloat(m[9].replace(/,/g, ""))
+      // Only include real fee/interest lines, not summary rows
+      if (amount > 0 && /fee|interest charge|late payment/i.test(desc) && !/^total/i.test(desc)) {
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: m[0].trim() })
       }
-      continue
     }
   }
 
@@ -609,13 +667,18 @@ export async function POST(request: NextRequest) {
 
     let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
 
-    // === PDF (text already extracted on frontend via pdfjs-dist) ===
+    // === PDF: decode base64, extract text server-side with pdf-parse (reliable Node.js library) ===
     if (isPDF) {
-      console.log("[upload] Parsing PDF text (extracted on frontend), length:", fileContent.length)
-      parsed = parsePDFText(fileContent)
+      const pdfBuffer = Buffer.from(fileContent, "base64")
+      console.log("[upload] Extracting PDF text server-side with pdf-parse, bytes:", pdfBuffer.length)
+      const pdfData = await pdfParse(pdfBuffer)
+      const extractedText = pdfData.text
+      console.log("[upload] pdf-parse extracted text length:", extractedText.length, "pages:", pdfData.numpages)
+      console.log("[upload] First 500 chars:", JSON.stringify(extractedText.substring(0, 500)))
+      parsed = parsePDFText(extractedText)
       console.log(`[upload] PDF parsed: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
     }
-    // === CSV (raw text from frontend) ===
+    // === CSV: raw text from frontend ===
     else {
       parsed = parseCSVText(fileContent)
       console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
