@@ -25,6 +25,12 @@ import {
 import { useToast } from "@/hooks/use-toast"
 
 import { BUILT_IN_RULES, CATEGORY_ID_TO_NAME } from "@/lib/categorization/rules-engine"
+import { computeUiExpenseTotals } from "@/lib/tax/treatment"
+import { KEYWORD_MAPPING_RULES } from "@/lib/categorization/keyword-mapping"
+import { RetirementOptimizer } from "@/components/retirement-optimizer"
+import { EstimatedTaxSafeHarbor } from "@/components/estimated-tax-safe-harbor"
+import { MappingCoverageAudit } from "@/components/mapping-coverage-audit"
+import { calculateFederalTaxSingle, calculateCaliforniaTaxSingle, CA_STANDARD_DEDUCTION, SS_WAGE_BASE, STANDARD_DEDUCTION } from "@/lib/tax/brackets"
 
 // Lazy load heavy tab components — only loads when user clicks that tab
 const StatementUploader = lazy(() => import("@/components/statement-uploader").then(m => ({ default: m.StatementUploader })))
@@ -271,6 +277,7 @@ export default function CaliforniaBusinessAccounting() {
 
     // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
+    const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const newTransactions = currentBusiness.transactions.map(t => {
       // Skip user-categorized transactions unless forceAll (don't override manual edits)
       if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
@@ -285,6 +292,32 @@ export default function CaliforniaBusinessAccounting() {
 
       const dl = t.description.toLowerCase()
       
+      // Keyword mapping layer (customRules) — applied before built-in rules
+      for (const rule of keywordRules) {
+        const pattern = rule.pattern.toLowerCase()
+        let matched = false
+        if (rule.match_type === "contains") matched = dl.includes(pattern)
+        else if (rule.match_type === "starts_with") matched = dl.startsWith(pattern)
+        else if (rule.match_type === "exact") matched = dl === pattern
+        else if (rule.match_type === "regex") {
+          try {
+            matched = new RegExp(pattern, "i").test(dl)
+          } catch {}
+        }
+
+        if (matched) {
+          const catInfo = CATEGORY_ID_TO_NAME[rule.category_id]
+          if (catInfo) {
+            updated++
+            return {
+              ...t,
+              category: catInfo.name,
+              isIncome: catInfo.isIncome,
+            }
+          }
+        }
+      }
+
       // Try all built-in rules from the rules engine
       for (const rule of BUILT_IN_RULES) {
         let matched = false
@@ -371,52 +404,7 @@ export default function CaliforniaBusinessAccounting() {
     updateCurrentBusiness({ receipts })
   }, [updateCurrentBusiness])
 
-  // --- 2025 IRS Federal Tax Brackets (Single Filer) ---
-  const calculateFederalTax = (taxableIncome: number): number => {
-    const brackets = [
-      { limit: 11925, rate: 0.10 },
-      { limit: 48475, rate: 0.12 },
-      { limit: 103350, rate: 0.22 },
-      { limit: 197300, rate: 0.24 },
-      { limit: 250525, rate: 0.32 },
-      { limit: 626350, rate: 0.35 },
-      { limit: Infinity, rate: 0.37 },
-    ]
-    let tax = 0
-    let prev = 0
-    for (const b of brackets) {
-      if (taxableIncome <= prev) break
-      const taxable = Math.min(taxableIncome, b.limit) - prev
-      tax += taxable * b.rate
-      prev = b.limit
-    }
-    return Math.round(tax * 100) / 100
-  }
-
-  // --- 2025 California Tax Brackets (Single Filer) ---
-  const calculateCaliforniaTax = (taxableIncome: number): number => {
-    const brackets = [
-      { limit: 10756, rate: 0.01 },
-      { limit: 25499, rate: 0.02 },
-      { limit: 40245, rate: 0.04 },
-      { limit: 55866, rate: 0.06 },
-      { limit: 70609, rate: 0.08 },
-      { limit: 360659, rate: 0.093 },
-      { limit: 432791, rate: 0.103 },
-      { limit: 721314, rate: 0.113 },
-      { limit: 1000000, rate: 0.123 },
-      { limit: Infinity, rate: 0.133 },
-    ]
-    let tax = 0
-    let prev = 0
-    for (const b of brackets) {
-      if (taxableIncome <= prev) break
-      const taxable = Math.min(taxableIncome, b.limit) - prev
-      tax += taxable * b.rate
-      prev = b.limit
-    }
-    return Math.round(tax * 100) / 100
-  }
+  // Tax bracket helpers now live in `lib/tax/brackets.ts`
 
   // Memoize expensive calculations
   const stats = useMemo(() => {
@@ -436,38 +424,7 @@ export default function CaliforniaBusinessAccounting() {
       .filter((t) => t.isIncome)
       .reduce((sum, t) => sum + t.amount, 0)
 
-    // Classify every non-income transaction
-    const personalKeywords = ["personal", "crypto"]
-    const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
-    // Capital/balance-sheet items -- not Schedule C deductions
-    const capitalKeywords = ["business loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
-    // Above-the-line deductions (Schedule 1) -- deducted from AGI, NOT Schedule C
-    const aboveTheLineCategories = ["health insurance", "sep-ira"]
-
-    const businessExpenses: typeof currentBusiness.transactions = []
-    let healthInsuranceTotal = 0
-    let sepIraTotal = 0
-
-    currentBusiness.transactions.forEach((t) => {
-      if (t.isIncome) return
-      const cl = (t.category || "").toLowerCase()
-      if (!cl || cl.includes("uncategorized")) return
-      if (personalKeywords.some(k => cl.includes(k))) return
-      if (transferKeywords.some(k => cl.includes(k))) return
-      if (capitalKeywords.some(k => cl.includes(k))) return
-      // Separate above-the-line deductions
-      if (cl.includes("health insurance")) { healthInsuranceTotal += t.amount; return }
-      if (cl.includes("sep-ira")) { sepIraTotal += t.amount; return }
-      businessExpenses.push(t)
-    })
-
-    const totalExpenses = businessExpenses.reduce((sum, t) => sum + t.amount, 0)
-    // Apply 50% meals deduction rule per IRS
-    const schedCDeductions = businessExpenses.reduce((sum, t) => {
-      const cl = (t.category || "").toLowerCase()
-      if (cl.includes("meals")) return sum + t.amount * 0.5
-      return sum + t.amount
-    }, 0)
+    const { totalExpenses, schedCDeductions, healthInsuranceTotal, sepIraTotal } = computeUiExpenseTotals(currentBusiness.transactions)
     // Total deductible = Schedule C expenses + above-the-line items
     const totalDeductible = schedCDeductions + healthInsuranceTotal + sepIraTotal
 
@@ -476,7 +433,7 @@ export default function CaliforniaBusinessAccounting() {
     const netProfit = Math.max(0, totalRevenue - schedCDeductions)
 
     // 1. Self-employment tax: 15.3% on 92.35% of net profit (up to SS wage base)
-    const ssWageBase2025 = 176100
+    const ssWageBase2025 = SS_WAGE_BASE[2025]
     const seTaxableIncome = Math.min(netProfit * 0.9235, ssWageBase2025)
     const ssTax = Math.min(seTaxableIncome, ssWageBase2025) * 0.124 // Social Security 12.4%
     const medicareTax = (netProfit * 0.9235) * 0.029 // Medicare 2.9% on ALL
@@ -491,19 +448,19 @@ export default function CaliforniaBusinessAccounting() {
     const agi = Math.max(0, netProfit - seTaxDeduction - healthInsuranceTotal - sepIraTotal)
 
     // 4. Standard deduction 2025: $15,000 single
-    const standardDeduction = 15000
+    const standardDeduction = STANDARD_DEDUCTION[2025]
 
     // 5. Taxable income after standard deduction + QBI
     const federalTaxableIncome = Math.max(0, agi - standardDeduction - qbiDeduction)
 
     // 6. 2025 Federal brackets (single filer)
-    const federalTax = calculateFederalTax(federalTaxableIncome)
+    const federalTax = calculateFederalTaxSingle(2025, federalTaxableIncome)
 
     // 7. California tax (single filer, 2025 brackets)
     // CA doesn't allow QBI deduction but does allow SE health ins + SEP-IRA deductions
-    const caStandardDeduction = 5540
+    const caStandardDeduction = CA_STANDARD_DEDUCTION[2025]
     const caTaxableIncome = Math.max(0, agi - caStandardDeduction)
-    const caTax = calculateCaliforniaTax(caTaxableIncome)
+    const caTax = calculateCaliforniaTaxSingle(2025, caTaxableIncome)
     // CA LLC fee waived for 2024-2026 if revenue < $250K
     const caLLCFee = totalRevenue >= 250000 ? 800 : 0
 
@@ -515,8 +472,8 @@ export default function CaliforniaBusinessAccounting() {
     const noDeductionSEIncome = Math.min(noDeductionProfit * 0.9235, ssWageBase2025)
     const noDeductionSE = (noDeductionSEIncome * 0.124) + ((noDeductionProfit * 0.9235) * 0.029)
     const noDeductionAGI = noDeductionProfit - (noDeductionSE * 0.5)
-    const noDeductionFederal = calculateFederalTax(Math.max(0, noDeductionAGI - standardDeduction - (noDeductionProfit * 0.20)))
-    const noDeductionCA = calculateCaliforniaTax(Math.max(0, noDeductionAGI - caStandardDeduction))
+    const noDeductionFederal = calculateFederalTaxSingle(2025, Math.max(0, noDeductionAGI - standardDeduction - noDeductionProfit * 0.20))
+    const noDeductionCA = calculateCaliforniaTaxSingle(2025, Math.max(0, noDeductionAGI - caStandardDeduction))
     const taxWithoutDeductions = noDeductionFederal + noDeductionSE + noDeductionCA
     const taxSavings = Math.max(0, taxWithoutDeductions - estimatedTaxLiability)
 
@@ -896,6 +853,13 @@ const DEDUCTION_LABELS: Record<string, string> = {
   waste: "Waste & Disposal",
   postage: "Postage & Shipping",
   cogs: "Cost of Service / COGS",
+  depletion: "Depletion",
+  "employee-benefit-programs": "Employee Benefit Programs",
+  "mortgage-interest": "Mortgage Interest",
+  "rent-vehicles-equipment": "Rent (Vehicles & Equipment)",
+  "repairs-maintenance": "Repairs & Maintenance",
+  supplies: "Supplies",
+  wages: "Wages",
 }
 
 // Map wizard deduction IDs to actual transaction category names
@@ -925,12 +889,40 @@ const DEDUCTION_CATEGORY_MAP: Record<string, string[]> = {
   "license-fees": ["License & Fee Expense"],
   rent: ["Rent Expense"],
   "sep-ira": ["SEP-IRA Contribution"],
-  waste: ["Waste & Disposal"],
+  waste: ["Waste & Disposal", "Waste & Sanitation Expense"],
   postage: ["Postage & Shipping Expense"],
   cogs: ["Cost of Service"],
+  depletion: ["Depletion Expense"],
+  "employee-benefit-programs": ["Employee Benefit Programs Expense"],
+  "mortgage-interest": ["Mortgage Interest Expense"],
+  "rent-vehicles-equipment": ["Rent Vehicles & Equipment Expense"],
+  "repairs-maintenance": ["Repairs & Maintenance Expense"],
+  supplies: ["Supplies Expense"],
+  wages: ["Wages Expense"],
 }
 
 function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessData; stats: any }) {
+  const deductionIds = currentBusiness.profile.deductions || []
+  const deductionCardsData = deductionIds.map((deduction) => {
+    const mappedCategories = DEDUCTION_CATEGORY_MAP[deduction] || []
+    const relatedTransactions = currentBusiness.transactions.filter(
+      (t) =>
+        !t.isIncome &&
+        (mappedCategories.some((mc) => t.category === mc) ||
+          t.category.toLowerCase().includes(deduction.toLowerCase()) ||
+          t.description.toLowerCase().includes(deduction.toLowerCase())),
+    )
+    const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
+    const deductPct = deduction === "meals" ? 0.5 : 1
+    const deductibleAmount = totalAmount * deductPct
+    return { deduction, relatedTransactions, totalAmount, deductibleAmount, deductPct }
+  })
+
+  const emptyDeductionCards = deductionCardsData.filter((d) => d.relatedTransactions.length === 0 || d.totalAmount === 0)
+  const uncategorizedCount = currentBusiness.transactions.filter(
+    (t) => !t.isIncome && (!t.category || t.category === "Uncategorized Expense" || t.category === ""),
+  ).length
+
   return (
     <div className="space-y-6">
       <Card>
@@ -942,44 +934,53 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {currentBusiness.profile.deductions && currentBusiness.profile.deductions.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {currentBusiness.profile.deductions.map((deduction) => {
-                const mappedCategories = DEDUCTION_CATEGORY_MAP[deduction] || []
-                const relatedTransactions = currentBusiness.transactions.filter(
-                  (t) =>
-                    !t.isIncome &&
-                    (mappedCategories.some(mc => t.category === mc) ||
-                      t.category.toLowerCase().includes(deduction.toLowerCase()) ||
-                      t.description.toLowerCase().includes(deduction.toLowerCase())),
-                )
-                const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
-                const deductPct = deduction === "meals" ? 0.5 : 1
-                const deductibleAmount = totalAmount * deductPct
-                // Effective marginal rate: ~15.3% SE + ~12% federal + ~4-6% CA for this income range
-                const effectiveRate = stats.totalRevenue > 0 ? Math.min(stats.estimatedTaxLiability / stats.totalRevenue, 0.40) : 0.25
-                const savings = Math.round(deductibleAmount * effectiveRate)
+          {deductionIds.length > 0 ? (
+            <div className="space-y-4">
+              {(emptyDeductionCards.length > 0 || uncategorizedCount > 0) && (
+                <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+                  {emptyDeductionCards.length > 0 && (
+                    <p className="text-sm font-semibold text-yellow-800">
+                      Configured but empty: {emptyDeductionCards.map((d) => DEDUCTION_LABELS[d.deduction] || d.deduction).join(", ")}
+                    </p>
+                  )}
+                  {uncategorizedCount > 0 && (
+                    <p className="text-xs text-yellow-800/80 mt-1">
+                      {uncategorizedCount} uncategorized transactions need review to maximize deductions.
+                    </p>
+                  )}
+                </div>
+              )}
 
-                return (
-                  <Card key={deduction} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-4">
-                      <h4 className="font-semibold text-sm mb-2 line-clamp-2">{DEDUCTION_LABELS[deduction] || deduction}</h4>
-                      <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
-                      {deductPct < 1 && (
-                        <div className="text-xs text-muted-foreground mb-1">
-                          Deductible ({deductPct * 100}%): ${deductibleAmount.toFixed(2)}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {deductionCardsData.map(({ deduction, relatedTransactions, totalAmount, deductibleAmount, deductPct }) => {
+                  // Effective marginal rate: ~15.3% SE + ~12% federal + ~4-6% CA for this income range
+                  const effectiveRate = stats.totalRevenue > 0 ? Math.min(stats.estimatedTaxLiability / stats.totalRevenue, 0.40) : 0.25
+                  const savings = Math.round(deductibleAmount * effectiveRate)
+
+                  return (
+                    <Card key={deduction} className={emptyDeductionCards.some((d) => d.deduction === deduction) ? "border-yellow-200 bg-yellow-50/30 hover:shadow-md transition-shadow" : "hover:shadow-md transition-shadow"}>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold text-sm mb-2 line-clamp-2">{DEDUCTION_LABELS[deduction] || deduction}</h4>
+                        <div className="text-2xl font-bold text-blue-600 mb-1">${totalAmount.toFixed(2)}</div>
+                        {deductPct < 1 && (
+                          <div className="text-xs text-muted-foreground mb-1">
+                            Deductible ({deductPct * 100}%): ${deductibleAmount.toFixed(2)}
+                          </div>
+                        )}
+                        <div className="text-sm text-green-600 font-medium mb-2">
+                          Tax Savings: ${savings.toFixed(2)}
                         </div>
-                      )}
-                      <div className="text-sm text-green-600 font-medium mb-2">
-                        Tax Savings: ${savings.toFixed(2)}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {relatedTransactions.length} transactions {"\u2022"} 2025 YTD
-                      </p>
-                    </CardContent>
-                  </Card>
-                )
-              })}
+                        <p className="text-xs text-muted-foreground">
+                          {relatedTransactions.length} transactions {"\u2022"} 2025 YTD
+                        </p>
+                        {relatedTransactions.length === 0 && (
+                          <p className="text-xs text-yellow-800/80 mt-1">No matching transactions yet</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
             </div>
           ) : (
             <div className="text-center py-8">
@@ -1095,6 +1096,9 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
           </div>
         </CardContent>
       </Card>
+      <RetirementOptimizer stats={stats} />
+      <EstimatedTaxSafeHarbor transactions={currentBusiness.transactions} />
+      <MappingCoverageAudit />
     </div>
   )
 }

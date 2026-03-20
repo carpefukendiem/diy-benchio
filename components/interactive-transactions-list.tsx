@@ -32,7 +32,7 @@ interface InteractiveTransactionsListProps {
   isLoading: boolean
 }
 
-const CATEGORIES = [
+export const CATEGORIES = [
   // --- Income ---
   "Sales Revenue",
   "Service Income",
@@ -58,6 +58,13 @@ const CATEGORIES = [
   "Bank & ATM Fee Expense",
   "License & Fee Expense",
   "California LLC Fee",
+  "Depletion Expense",
+  "Employee Benefit Programs Expense",
+  "Mortgage Interest Expense",
+  "Rent Vehicles & Equipment Expense",
+  "Repairs & Maintenance Expense",
+  "Supplies Expense",
+  "Wages Expense",
   "Merchant Processing Fees",
   "Merchant Fees Expense",
   "Office Supplies",

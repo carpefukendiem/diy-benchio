@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { categorizeByRules } from "@/lib/categorization/rules-engine"
+import { categorizeByRules, CATEGORY_ID_TO_NAME } from "@/lib/categorization/rules-engine"
 import pdfParse from "pdf-parse"
+import { KEYWORD_MAPPING_RULES } from "@/lib/categorization/keyword-mapping"
 
 // Route segment config for Next.js App Router
 export const maxDuration = 30
@@ -635,8 +636,9 @@ function parseWellsFargoTextExport(lines: string[]) {
 // ========================================
 function toUIFormat(categorized: any[]) {
   return categorized.map(tx => {
-    const catInfo = tx.category_id ? CAT[tx.category_id] : null
-    const categoryName = catInfo?.name || "Uncategorized Expense"
+    const categoryName = tx.category_id
+      ? CAT[tx.category_id]?.name ?? CATEGORY_ID_TO_NAME[tx.category_id]?.name ?? "Uncategorized Expense"
+      : "Uncategorized Expense"
     let merchantName = tx.description
       .replace(/Purchase authorized on \d{2}\/\d{2}\s*/i,"")
       .replace(/Recurring Payment authorized on \d{2}\/\d{2}\s*/i,"")
@@ -692,7 +694,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Categorize
-    const categorized = categorizeByRules(parsed.transactions)
+    const categorized = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
     const transactions = toUIFormat(categorized).map((t, i) => ({
       ...t,
       id: `${accountName}-${Date.now()}-${i}`,

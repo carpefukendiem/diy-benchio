@@ -4,6 +4,7 @@ import { parseWellsFargoStatement } from '@/lib/parsers/wellsfargo-pdf';
 import { parseCSVStatement } from '@/lib/parsers/csv-parser';
 import { categorizeByRules } from '@/lib/categorization/rules-engine';
 import { categorizeWithAI } from '@/lib/categorization/ai-engine';
+import { KEYWORD_MAPPING_RULES } from '@/lib/categorization/keyword-mapping';
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 1: Rule-based categorization
-    const categorized = categorizeByRules(parsedTransactions);
+    const categorized = categorizeByRules(parsedTransactions, KEYWORD_MAPPING_RULES);
 
     // Step 2: AI categorization for unknowns
     const uncategorized = categorized.filter(tx => !tx.category_id);

@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { FileSpreadsheet, FileText, TrendingUp, TrendingDown, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { formatScheduleCLine, getDeductibleAmountForExpense, getScheduleCLineForCategory } from "@/lib/tax/treatment"
 
 interface Transaction {
   id: string
@@ -58,19 +59,29 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "Office Supplies": { line: "18", label: "Office expense" },
   "Office Supply Expense": { line: "18", label: "Office expense" },
   "Office Kitchen Supplies": { line: "18", label: "Office expense" },
-  "Software & Web Hosting Expense": { line: "18", label: "Office expense / Software" },
+  "Software & Web Hosting Expense": { line: "27a", label: "Other expenses (software)" },
   "Rent Expense": { line: "20b", label: "Rent (other business property)" },
+  "Rent Vehicles & Equipment Expense": { line: "20a", label: "Rent (vehicles/equipment)" },
   "Travel Expense": { line: "24a", label: "Travel" },
   "Business Meals Expense": { line: "24b", label: "Meals (50% deductible)", deductPct: 50 },
   "Phone & Internet Expense": { line: "25", label: "Utilities" },
   "Utilities Expense": { line: "25", label: "Utilities" },
-  "License & Fee Expense": { line: "27a", label: "Other expenses (licenses & permits)" },
-  "California LLC Fee": { line: "27a", label: "Other expenses (CA franchise tax)" },
+  "Depletion Expense": { line: "12", label: "Depletion" },
+  "Employee Benefit Programs Expense": { line: "14", label: "Employee benefit programs" },
+  "Mortgage Interest Expense": { line: "16a", label: "Mortgage interest" },
+  "Repairs & Maintenance Expense": { line: "21", label: "Repairs and maintenance" },
+  "Supplies Expense": { line: "22", label: "Supplies" },
+  "Wages Expense": { line: "26", label: "Wages" },
+  "License & Fee Expense": { line: "23", label: "Taxes and licenses" },
+  "California LLC Fee": { line: "23", label: "Taxes and licenses (CA franchise tax)" },
   "Client Gifts": { line: "27a", label: "Other expenses (gifts $25/person limit)" },
   "Eye Care - Business Expense": { line: "27a", label: "Other expenses (occupational eye care)" },
   "Education & Training": { line: "27a", label: "Other expenses (training)" },
   "Postage & Shipping Expense": { line: "27a", label: "Other expenses (postage)" },
   "Waste & Disposal": { line: "27a", label: "Other expenses (waste)" },
+  "Waste & Sanitation Expense": { line: "27a", label: "Other expenses (waste)" },
+  "Home Improvement": { line: "27a", label: "Other expenses (home improvements)" },
+  "Home Improvement (Business)": { line: "27a", label: "Other expenses (home improvements)" },
   "Home Office Expense": { line: "30", label: "Business use of home" },
   "SEP-IRA Contribution": { line: "S1-16", label: "Self-employed SEP/SIMPLE/qualified plans (Schedule 1)" },
   "Business Treasury Investment": { line: "N/A", label: "Asset -- not current year deduction" },
@@ -123,7 +134,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     const nondeductible: [string, typeof categoryTotals[string]][] = []
     const capital: [string, typeof categoryTotals[string]][] = []
 
-    const personalKeywords = ["personal", "crypto / investments"]
+    const personalKeywords = ["personal", "crypto / investments", "atm withdrawal", "cash withdrawal"]
     const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
     const cogsKeywords = ["cost of service", "cost of goods", " cogs"]
     const aboveLineKeywords = ["health insurance", "sep-ira"]
@@ -214,11 +225,11 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
   const exportCSV = useCallback(() => {
     const rows = [["Date", "Description", "Amount", "Category", "Type", "Account", "Schedule C Line"]]
     transactions.forEach(t => {
-      const scLine = SCHEDULE_C_LINES[t.category]
+      const scheduleLine = formatScheduleCLine(t.category)
       rows.push([
         t.date, `"${t.description}"`, t.amount.toFixed(2), t.category,
         t.isIncome ? "Income" : "Expense", t.account,
-        scLine ? `Line ${scLine.line} - ${scLine.label}` : "",
+        scheduleLine,
       ])
     })
     const csv = rows.map(r => r.join(",")).join("\n")
@@ -245,12 +256,12 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     // Group by Schedule C line
     const lineGroups: Record<string, { categories: string[]; amount: number; deductible: number; count: number }> = {}
     expenseItems.forEach(([cat, data]) => {
-      const sc = SCHEDULE_C_LINES[cat]
+      const sc = getScheduleCLineForCategory(cat)
       const lineKey = sc ? `Line ${sc.line}` : "Other"
       if (!lineGroups[lineKey]) lineGroups[lineKey] = { categories: [], amount: 0, deductible: 0, count: 0 }
       lineGroups[lineKey].categories.push(cat)
       lineGroups[lineKey].amount += data.amount
-      lineGroups[lineKey].deductible += sc?.deductPct ? data.amount * (sc.deductPct / 100) : data.amount
+      lineGroups[lineKey].deductible += getDeductibleAmountForExpense(cat, data.amount)
       lineGroups[lineKey].count += data.transactions.length
     })
 
@@ -276,7 +287,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
     transactions
       .sort((a, b) => a.date.localeCompare(b.date))
       .forEach(t => {
-        const sc = SCHEDULE_C_LINES[t.category]
+        const sc = getScheduleCLineForCategory(t.category)
         txRows.push([
           t.date, t.description, t.amount.toFixed(2), t.category,
           sc ? `Line ${sc.line}` : "", t.isIncome ? "Income" : "Expense", t.account,
@@ -373,7 +384,7 @@ ${aboveTheLineItems.length > 0 ? `
 <tr class="section-gap"><td colspan="2"></td></tr>
 <tr class="section-header"><td colspan="2">Above-the-Line Deductions (Schedule 1)</td></tr>
 ${aboveTheLineItems.map(([cat, data]) => {
-    const sc = SCHEDULE_C_LINES[cat]
+    const sc = getScheduleCLineForCategory(cat)
     return `<tr><td class="cat-name">${cat} <span class="light">${sc ? `(${sc.label})` : ""}</span></td><td class="amt">${fmtAmt(data.amount)}</td></tr>`
   }).join("")}
 <tr class="subtotal"><td>Total Above-the-Line</td><td class="amt">${fmtAmt(totalAboveTheLine)}</td></tr>
@@ -394,7 +405,7 @@ ${capitalItems.length > 0 ? `
 <p style="font-size: 9px; color: #1e40af; margin: 0 0 8px;">These are balance-sheet items. Loan proceeds are NOT income. Crypto treasury is a capital asset. Loan principal repayments are NOT deductible.</p>
 <table>
 ${capitalItems.map(([cat, data]) => {
-  const note = SCHEDULE_C_LINES[cat]?.label || ""
+  const note = getScheduleCLineForCategory(cat)?.label || ""
   return `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr><tr><td colspan="2" style="font-size:8.5px;color:#6b7280;padding-left:12px;padding-bottom:4px;">${note}</td></tr>`
 }).join("")}
 </table>

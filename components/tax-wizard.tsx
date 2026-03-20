@@ -62,6 +62,16 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
     { id: "software", label: "Software & SaaS Subscriptions", description: "Line 27a · GoHighLevel ($497+$25/mo), Mailgun, OpenAI, Cursor, Loom, Screaming Frog", scheduleCLine: "27a" },
     { id: "education", label: "Education & Training", description: "Line 27a · Codecademy, courses, certifications, books — must be business-related", scheduleCLine: "27a" },
     { id: "waste", label: "Waste & Disposal", description: "Line 27a · Marborg — business-use percentage", scheduleCLine: "27a" },
+    // --- Other IRS Schedule C expense lines not currently tracked in the wizard ---
+    { id: "depletion", label: "Depletion", description: "Line 12 · Depletion (oil/gas/mining). Rare for most service businesses.", scheduleCLine: "12" },
+    { id: "employee-benefit-programs", label: "Employee Benefit Programs", description: "Line 14 · Employer-paid benefits for employees (health plans, etc.).", scheduleCLine: "14" },
+    { id: "mortgage-interest", label: "Mortgage Interest (Business Portion)", description: "Line 16a · Deductible business mortgage interest (if you have a business mortgage).", scheduleCLine: "16a" },
+    { id: "rent-vehicles-equipment", label: "Rent (Vehicles / Equipment)", description: "Line 20a · Rental of vehicles or equipment used in the business.", scheduleCLine: "20a" },
+    { id: "repairs-maintenance", label: "Repairs & Maintenance", description: "Line 21 · Repairs and maintenance that keep business property working (not improvements).", scheduleCLine: "21" },
+    { id: "supplies", label: "Supplies (Non-Office)", description: "Line 22 · Materials and supplies (not office supplies). Examples: consumables for client work.", scheduleCLine: "22" },
+    { id: "wages", label: "Wages (if you have employees)", description: "Line 26 · W-2 wages and related payroll costs paid to employees.", scheduleCLine: "26" },
+    { id: "rent", label: "Rent / Co-working", description: "Line 20b · Office rent or co-working space (separate from booth/vehicle rentals).", scheduleCLine: "20b" },
+    { id: "license-fees", label: "License & Permits (Taxes & Licenses)", description: "Line 23 · Business licenses, city permits, and similar taxes & licenses.", scheduleCLine: "23" },
     // Line 30 — Home Office
     { id: "home-office", label: "Home Office Deduction", description: "Line 30 · Simplified: $5/sq ft up to 300 sq ft ($1,500 max). Must be dedicated space.", scheduleCLine: "30" },
     // Schedule 1 (not Schedule C, but critical)
@@ -95,6 +105,14 @@ export function TaxWizard({ onComplete }: TaxWizardProps) {
     { id: "education", label: "Continuing Education", description: "Line 27a · Advanced color classes, cutting workshops, cosmetology CE hours", scheduleCLine: "27a" },
     { id: "laundry", label: "Laundry & Cleaning", description: "Line 27a · Towel service, cape cleaning, smock laundering", scheduleCLine: "27a" },
     { id: "clothing", label: "Professional Clothing / Uniforms", description: "Line 27a · Only if required by salon or branded — NOT everyday clothes", scheduleCLine: "27a" },
+    // --- Other IRS Schedule C expense lines not currently tracked in the wizard ---
+    { id: "depletion", label: "Depletion", description: "Line 12 · Depletion (oil/gas/mining). Rare for most service businesses.", scheduleCLine: "12" },
+    { id: "employee-benefit-programs", label: "Employee Benefit Programs", description: "Line 14 · Employer-paid benefits for employees (health plans, etc.).", scheduleCLine: "14" },
+    { id: "mortgage-interest", label: "Mortgage Interest (Business Portion)", description: "Line 16a · Deductible business mortgage interest (if you have a business mortgage).", scheduleCLine: "16a" },
+    { id: "rent-vehicles-equipment", label: "Rent (Vehicles / Equipment)", description: "Line 20a · Rental of vehicles or equipment used in the business.", scheduleCLine: "20a" },
+    { id: "repairs-maintenance", label: "Repairs & Maintenance", description: "Line 21 · Repairs and maintenance that keep business property working (not improvements).", scheduleCLine: "21" },
+    { id: "supplies", label: "Supplies (Non-Office)", description: "Line 22 · Materials and supplies used for client services (in addition to your hair-specific supplies).", scheduleCLine: "22" },
+    { id: "wages", label: "Wages (if you have employees)", description: "Line 26 · W-2 wages and related payroll costs paid to employees.", scheduleCLine: "26" },
     // Line 24b — Meals
     { id: "meals", label: "Business Meals", description: "Line 24b · Client consultations over coffee/lunch — 50% deductible, must document purpose", scheduleCLine: "24b" },
     // Line 30 — Home Office
