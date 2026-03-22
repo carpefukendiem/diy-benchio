@@ -8,12 +8,10 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Upload, FileText, CheckCircle, XCircle, Calendar, X, Loader2, ArrowRight, AlertTriangle } from "lucide-react"
+import { Upload, FileText, CheckCircle, XCircle, X, Loader2, ArrowRight, AlertTriangle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { TransactionReview } from "@/components/transaction-review"
-
 interface UploadedStatement {
   id: string
   accountName: string
@@ -46,6 +44,33 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ]
 
+/** Parse API error when the body may be JSON, HTML (e.g. 413 from edge), or empty. */
+async function readUploadErrorMessage(response: Response): Promise<string> {
+  const text = await response.text()
+  const trimmed = text.trim()
+  if (!trimmed) {
+    if (response.status === 413) {
+      return "File too large for the server. Try CSV export, split files, or upgrade hosting limits (base64 JSON uploads hit limits faster)."
+    }
+    return `Request failed (HTTP ${response.status})`
+  }
+  try {
+    const j = JSON.parse(trimmed) as { error?: string; message?: string }
+    if (typeof j.error === "string") return j.error
+    if (typeof j.message === "string") return j.message
+  } catch {
+    /* non-JSON */
+  }
+  return trimmed.length > 280 ? `${trimmed.slice(0, 280)}…` : trimmed
+}
+
+/** Let React paint progress before heavy work / network (avoids “frozen” UI on multi-file upload). */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+}
+
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
   const [accountType, setAccountType] = useState<"bank" | "credit_card" | "personal" | "investment">("bank")
@@ -54,8 +79,6 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
   const [fileProgress, setFileProgress] = useState<FileProgress[]>([])
   const [allParsedTransactions, setAllParsedTransactions] = useState<any[]>([])
-  const [showReview, setShowReview] = useState(false)
-  const [processedFiles, setProcessedFiles] = useState<Array<{ fileName: string; month: string; year: string; transactions: any[] }>>([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -78,6 +101,44 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     const updated = savedAccountNames.filter((n) => n !== name)
     setSavedAccountNames(updated)
     localStorage.setItem("savedAccountNames", JSON.stringify(updated))
+  }
+
+  const buildNewStatements = (taggedTransactions: any[], filesCount: number): UploadedStatement[] => {
+    const statementsByMonth = new Map<string, any[]>()
+    taggedTransactions.forEach((t) => {
+      const key = t.date.substring(0, 7)
+      if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
+      statementsByMonth.get(key)!.push(t)
+    })
+
+    return Array.from(statementsByMonth.entries()).map(([ym, txns], idx) => {
+      const [year, monthNum] = ym.split("-")
+      return {
+        id: `${accountName}-${year}-${MONTHS[parseInt(monthNum) - 1]}-${Date.now()}-${idx}`,
+        accountName,
+        accountType,
+        month: MONTHS[parseInt(monthNum) - 1] || "Unknown",
+        year,
+        fileName: `${filesCount} file${filesCount === 1 ? "" : "s"}`,
+        uploadDate: new Date().toISOString(),
+        transactions: txns,
+        status: "processed" as const,
+      }
+    })
+  }
+
+  /** Merge parsed transactions into app state and advance the wizard. */
+  const commitImported = (taggedTransactions: any[], filesCount: number, clearFileProgress = true) => {
+    const newStatements = buildNewStatements(taggedTransactions, filesCount)
+    onStatementsUpdate([...existingStatements, ...newStatements])
+    toast({
+      title: "Statements imported",
+      description: `${taggedTransactions.length} transactions · ${newStatements.length} month${newStatements.length === 1 ? "" : "s"} · ${filesCount} file${filesCount === 1 ? "" : "s"}`,
+    })
+    if (clearFileProgress) setFileProgress([])
+    setAllParsedTransactions([])
+    setAccountName("")
+    if (onContinue) setTimeout(() => onContinue(), 500)
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,45 +176,38 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       fileName: f.name, status: "pending" as const, transactionCount: 0,
     }))
     setFileProgress(progress)
+    await nextFrame()
 
-    const successFiles: typeof processedFiles = []
+    toast({
+      title: `Processing ${filesToProcess.length} file${filesToProcess.length === 1 ? "" : "s"}`,
+      description: "Uploading to the server (one file at a time). Keep this tab open.",
+    })
+
+    const successFiles: Array<{ fileName: string; month: string; year: string; transactions: any[] }> = []
     let allTxns: any[] = []
+    const fileErrors: { name: string; message: string }[] = []
 
     for (let i = 0; i < filesToProcess.length; i++) {
       const file = filesToProcess[i]
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
+      await nextFrame()
 
       try {
         const isPDF = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf"
 
-        // For PDFs: send raw bytes as base64 to the server.
-        // Server uses pdf-parse (Node.js, reliable) instead of pdfjs in the browser.
-        // For CSVs: send raw text as before.
-        let fileContent: string
-        if (isPDF) {
-          const arrayBuffer = await file.arrayBuffer()
-          const bytes = new Uint8Array(arrayBuffer)
-          let binary = ""
-          for (let b = 0; b < bytes.byteLength; b++) binary += String.fromCharCode(bytes[b])
-          fileContent = btoa(binary)
-          console.log(`[upload] Sending PDF as base64: ${file.name}, size=${file.size}`)
-        } else {
-          fileContent = await file.text()
-          console.log(`[upload] Sending CSV as text: ${file.name}, length=${fileContent.length}`)
-        }
+        // Multipart upload: raw file bytes (smaller than base64-in-JSON; avoids main-thread freeze from huge btoa loops).
+        const formData = new FormData()
+        formData.append("file", file, file.name)
+        formData.append("fileName", file.name)
+        formData.append("isPDF", isPDF ? "true" : "false")
+        formData.append("accountName", accountName)
+        formData.append("accountType", accountType)
 
         const response = await fetch("/api/statements/upload", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileName: file.name,
-            fileContent,
-            isPDF,
-            accountName,
-            accountType,
-          }),
+          body: formData,
         })
-        console.log(`[v0] Response for ${file.name}: status=${response.status}`)
+        console.log(`[upload] Response for ${file.name}: status=${response.status}`)
 
         if (response.ok) {
           const data = await response.json()
@@ -199,23 +253,44 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             ))
           }
         } else {
-          const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
-          console.log(`[v0] Error for ${file.name}:`, errData)
+          const message = await readUploadErrorMessage(response)
+          console.warn(`[upload] Error for ${file.name}:`, message)
+          fileErrors.push({ name: file.name, message })
           setFileProgress(prev => prev.map((p, idx) =>
-            idx === i ? { ...p, status: "error", error: errData.error || `Failed (${response.status})` } : p
+            idx === i ? { ...p, status: "error", error: message } : p
           ))
         }
       } catch (error: any) {
+        const message = error.message || "Network error"
+        fileErrors.push({ name: file.name, message })
         setFileProgress(prev => prev.map((p, idx) =>
-          idx === i ? { ...p, status: "error", error: error.message || "Network error" } : p
+          idx === i ? { ...p, status: "error", error: message } : p
         ))
       }
     }
 
     setIsUploading(false)
     setAllParsedTransactions(allTxns)
-    setProcessedFiles(successFiles)
     event.target.value = ""
+
+    if (allTxns.length > 0) {
+      // Keep per-file success visible briefly, then clear (commit still runs immediately).
+      commitImported(autoTagForAccountType(allTxns), successFiles.length, false)
+      window.setTimeout(() => setFileProgress([]), 2200)
+      if (fileErrors.length > 0) {
+        toast({
+          title: `${fileErrors.length} file${fileErrors.length === 1 ? "" : "s"} failed`,
+          description: fileErrors.slice(0, 4).map((e) => `${e.name}: ${e.message}`).join(" · "),
+          variant: "destructive",
+        })
+      }
+    } else if (fileErrors.length > 0) {
+      toast({
+        title: "Could not import statements",
+        description: fileErrors.slice(0, 3).map((e) => `${e.name}: ${e.message}`).join(" · "),
+        variant: "destructive",
+      })
+    }
   }
 
   const autoTagForAccountType = (txns: any[]) => {
@@ -226,65 +301,6 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       return txns.map((t) => ({ ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }))
     }
     return txns
-  }
-
-  const handleAutoImport = () => {
-    if (allParsedTransactions.length === 0) return
-
-    const taggedTransactions = autoTagForAccountType(allParsedTransactions)
-    const statementsByMonth = new Map<string, any[]>()
-    taggedTransactions.forEach((t) => {
-      const key = t.date.substring(0, 7)
-      if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
-      statementsByMonth.get(key)!.push(t)
-    })
-
-    const newStatements: UploadedStatement[] = Array.from(statementsByMonth.entries()).map(([ym, txns]) => {
-      const [year, monthNum] = ym.split("-")
-      return {
-        id: `${accountName}-${year}-${MONTHS[parseInt(monthNum) - 1]}-${Date.now()}`,
-        accountName, accountType,
-        month: MONTHS[parseInt(monthNum) - 1] || "Unknown",
-        year,
-        fileName: `${processedFiles.length} files`,
-        uploadDate: new Date().toISOString(),
-        transactions: txns,
-        status: "processed" as const,
-      }
-    })
-
-    onStatementsUpdate([...existingStatements, ...newStatements])
-    toast({ title: "Imported!", description: `${taggedTransactions.length} transactions from ${newStatements.length} months.` })
-    setFileProgress([]); setAllParsedTransactions([]); setProcessedFiles([]); setAccountName("")
-    if (onContinue) setTimeout(() => onContinue(), 500)
-  }
-
-  const handleReviewFirst = () => { setShowReview(true) }
-
-  const handleApproveFromReview = (transactions: any[]) => {
-    setShowReview(false)
-    const taggedTransactions = autoTagForAccountType(transactions)
-    const statementsByMonth = new Map<string, any[]>()
-    taggedTransactions.forEach((t) => {
-      const key = t.date.substring(0, 7)
-      if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
-      statementsByMonth.get(key)!.push(t)
-    })
-    const newStatements: UploadedStatement[] = Array.from(statementsByMonth.entries()).map(([ym, txns]) => {
-      const [year, monthNum] = ym.split("-")
-      return {
-        id: `${accountName}-${year}-${MONTHS[parseInt(monthNum) - 1]}-${Date.now()}`,
-        accountName, accountType,
-        month: MONTHS[parseInt(monthNum) - 1] || "Unknown", year,
-        fileName: `${processedFiles.length} files`,
-        uploadDate: new Date().toISOString(),
-        transactions: txns, status: "processed" as const,
-      }
-    })
-    onStatementsUpdate([...existingStatements, ...newStatements])
-    toast({ title: "Imported!", description: `${taggedTransactions.length} transactions imported.` })
-    setFileProgress([]); setAllParsedTransactions([]); setProcessedFiles([]); setAccountName("")
-    if (onContinue) setTimeout(() => onContinue(), 500)
   }
 
   const handleDeleteStatement = (id: string) => {
@@ -298,26 +314,14 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     return acc
   }, {} as Record<string, UploadedStatement[]>)
 
-  if (showReview && allParsedTransactions.length > 0) {
-    return (
-      <TransactionReview
-        transactions={allParsedTransactions}
-        accountName={accountName}
-        month={`${processedFiles.length} months`}
-        year=""
-        fileName={`${processedFiles.length} files`}
-        onApprove={handleApproveFromReview}
-        onCancel={() => setShowReview(false)}
-      />
-    )
-  }
-
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Upload Bank Statements</CardTitle>
-          <CardDescription>Select your account, then upload all monthly PDF or CSV statements at once.</CardDescription>
+          <CardDescription>
+            Select your account, then upload all monthly PDF or CSV statements at once. Files are sent directly to the server (no slow browser encoding) and import automatically when parsing succeeds.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -411,28 +415,6 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                 </div>
               ))}
             </div>
-
-            {/* IMPORT BUTTONS */}
-            {!isUploading && allParsedTransactions.length > 0 && (
-              <div className="mt-6 p-4 rounded-lg border-2 border-primary bg-primary/5">
-                <div className="flex items-center justify-between flex-wrap gap-4">
-                  <div>
-                    <p className="font-bold text-lg">{allParsedTransactions.length} transactions ready</p>
-                    <p className="text-sm text-muted-foreground">
-                      {processedFiles.length} statements ·
-                      Income: ${allParsedTransactions.filter((t: any) => t.isIncome).reduce((s: number, t: any) => s + t.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} ·
-                      Expenses: ${allParsedTransactions.filter((t: any) => !t.isIncome).reduce((s: number, t: any) => s + t.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={handleReviewFirst}>Review First</Button>
-                    <Button size="lg" onClick={handleAutoImport} className="gap-2 font-bold">
-                      Import & Continue <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {!isUploading && allParsedTransactions.length === 0 && fileProgress.every(f => f.status !== "pending" && f.status !== "uploading") && (
               <div className="mt-6 p-4 rounded-lg border border-destructive/30 bg-destructive/5">

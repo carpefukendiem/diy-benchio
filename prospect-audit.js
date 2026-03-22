@@ -467,23 +467,59 @@ async function auditWebsite({ url, city }) {
   };
 }
 
+function keywordPhraseWithoutCity(keyword, cityName) {
+  const k = safeText(keyword).trim();
+  const c = safeText(cityName).trim();
+  if (!k) return "";
+  if (!c) return k;
+  const escaped = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return k.replace(new RegExp(`\\s+${escaped}\\s*$`, "i"), "").trim() || k;
+}
+
+/**
+ * Pick the keyword result whose prospect rank is worst (highest position number),
+ * for outreach competitor context (rank 1 & 2 names on that SERP).
+ */
+function pickOutreachRankingEntry(rankingByKeyword) {
+  if (!Array.isArray(rankingByKeyword) || rankingByKeyword.length === 0) return null;
+  const usable = rankingByKeyword.filter((e) => e && Array.isArray(e.top10) && e.top10.length >= 2);
+  if (usable.length === 0) return null;
+  const withPos = usable.filter((e) => e.position !== null && e.position !== undefined);
+  if (withPos.length === 0) return usable[0];
+  return withPos.reduce((worst, e) => (e.position > worst.position ? e : worst), withPos[0]);
+}
+
+/** First N whitespace-separated words only — for outreach copy; JSON keeps full names. */
+function truncateCompetitorNameForOutreach(name, maxWords = 3) {
+  const words = safeText(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  return words.slice(0, maxWords).join(" ");
+}
+
 function buildOutreachMessages({
   businessName,
   city,
-  niche,
   painPointId,
   painLabel,
   revenueLostPerMonth,
   rankingWorst,
   prospectReviewCount,
   topCompetitorReviewCount,
+  maxCompetitorReviewCount,
   daysSinceLastPostProxy,
   websiteIssueCount,
+  nicheKeywordPhrase,
+  competitor1Name,
+  competitor2Name,
+  daysSincePost,
 }) {
-  const revenueLostStr = formatMoney(revenueLostPerMonth) || `$${Math.round(revenueLostPerMonth).toLocaleString("en-US")} / mo`;
+  const revenueLostStr = formatMoney(revenueLostPerMonth) || `$${Math.round(revenueLostPerMonth).toLocaleString("en-US")}`;
   const painDetail = (() => {
     if (painPointId === "ranking_position") return `you’re not consistently showing at the very top of the Map Pack (worst rank: #${rankingWorst})`;
-    if (painPointId === "review_gap") return `your review volume trails the local leader (${prospectReviewCount ?? "?"} vs ${topCompetitorReviewCount ?? "?"} reviews)`;
+    if (painPointId === "review_gap") return `your review volume trails the local leader (${prospectReviewCount ?? "?"} vs ${maxCompetitorReviewCount ?? "?"} reviews)`;
     if (painPointId === "days_since_post") return `your GBP freshness looks low (last GBP activity proxy: ~${Math.round(daysSinceLastPostProxy)} days ago)`;
     if (painPointId === "website_issues") return `your website has a few conversion blockers (${websiteIssueCount} issues found)`;
     return "your presence has conversion gaps";
@@ -500,33 +536,32 @@ function buildOutreachMessages({
     return hasQuestion ? `${sliced}?` : sliced;
   }
 
-  // GBP message: under 150 words, ends with yes/no question.
-  const gbpMessage =
-    `Hi ${businessName} team,\n\n` +
-    `I checked your Google Business Profile + site for ${city}.\n` +
-    `Biggest gap: ${painDetail}.\n` +
-    `Based on your current Map visibility and site audit, you could be leaving about ${revenueLostStr}/month on the table.\n\n` +
-    `If you want, I can send a prioritized checklist (GBP + the top website fixes) so you can act on it fast.\n` +
-    `Would that be helpful?`;
+  const prospectRc = typeof prospectReviewCount === "number" ? prospectReviewCount : 0;
+  const topRc = typeof topCompetitorReviewCount === "number" ? topCompetitorReviewCount : 0;
 
-  const emailSubject = `Quick ${painLabel} fix could recover ~${revenueLostStr}/mo`;
+  const competitor1Short = truncateCompetitorNameForOutreach(competitor1Name);
+  const competitor2Short = truncateCompetitorNameForOutreach(competitor2Name);
+
+  const gbpMessage =
+    `Hi ${businessName},\n\n` +
+    `I was searching for a ${nicheKeywordPhrase} in ${city} and noticed ${competitor1Short} and ${competitor2Short} are consistently showing above you. Your profile has ${prospectRc} reviews vs their ${topRc} — and your last GBP post was ${daysSincePost} days ago.\n\n` +
+    `That gap is costing you roughly ${revenueLostStr}/month in missed patients. I can show you exactly what to fix — worth a look?`;
+
+  const emailSubject = `Why ${competitor1Short} is ranking above ${businessName} on Google Maps`;
 
   let smsMessage =
-    `Quick check for ${businessName} in ${city}: ${painDetail}. ` +
-    `Estimated impact: ~${revenueLostStr}/mo in missed revenue. ` +
-    `Want the 2-minute plan for what to fix first?`;
+    `Hi — ${businessName} has ${prospectRc} Google reviews vs ${competitor1Short}'s ${topRc}. That gap costs ~${revenueLostStr}/mo. Want the quick fix?`;
 
-  // Enforce SMS < 60 words requirement.
-  smsMessage = truncateToWordLimitPreservingTrailingQuestion(smsMessage, 60);
+  // Enforce SMS < 50 words.
+  smsMessage = truncateToWordLimitPreservingTrailingQuestion(smsMessage, 50);
 
-  // Enforce GBP < 150 words requirement (with a conservative approach).
-  // If it ever exceeded, we trim but keep the final question.
+  // Enforce GBP < 120 words.
   const gbpWordCount = safeText(gbpMessage)
     .replace(/\n+/g, " ")
     .trim()
     .split(/\s+/)
     .filter(Boolean).length;
-  const maxGbpWords = 150;
+  const maxGbpWords = 120;
   let safeGbpMessage = gbpMessage;
   if (gbpWordCount > maxGbpWords) {
     safeGbpMessage = truncateToWordLimitPreservingTrailingQuestion(gbpMessage, maxGbpWords);
@@ -914,18 +949,33 @@ async function main() {
   console.log(`Estimated monthly revenue lost: ${formatMoney(estimatedMonthlyRevenueLost)}`);
 
   console.log(`\n[6/6] Generating outreach messages...`);
+  const outreachEntry = pickOutreachRankingEntry(rankingByKeyword);
+  if (!outreachEntry?.top10 || outreachEntry.top10.length < 2) {
+    throw new Error("Not enough Google Places results to build outreach messages (need rank 1 and 2 competitors in the same search).");
+  }
+  const competitor1Name = safeText(outreachEntry.top10[0].name);
+  const competitor2Name = safeText(outreachEntry.top10[1].name);
+  const nicheKeywordPhrase = keywordPhraseWithoutCity(outreachEntry.keyword, city) || safeText(outreachEntry.keyword);
+  const rankOneCompetitorReviewCount =
+    typeof outreachEntry.top10[0].reviewCount === "number" ? outreachEntry.top10[0].reviewCount : 0;
+  const daysSincePost = Math.round(Number(daysSinceLastPostProxy) || 0);
+
   const messages = buildOutreachMessages({
     businessName,
     city,
-    niche,
     painPointId,
     painLabel,
     revenueLostPerMonth: estimatedMonthlyRevenueLost,
     rankingWorst,
-    prospectReviewCount: targetReviewCount ?? null,
-    topCompetitorReviewCount: maxTopCompetitorReviewCount || null,
+    prospectReviewCount: targetReviewCount ?? 0,
+    topCompetitorReviewCount: rankOneCompetitorReviewCount,
+    maxCompetitorReviewCount: maxTopCompetitorReviewCount || 0,
     daysSinceLastPostProxy: daysSinceLastPostProxy ?? 0,
     websiteIssueCount,
+    nicheKeywordPhrase,
+    competitor1Name,
+    competitor2Name,
+    daysSincePost,
   });
 
   const output = {

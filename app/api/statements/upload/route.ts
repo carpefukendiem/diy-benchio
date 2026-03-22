@@ -3,8 +3,9 @@ import { categorizeByRules, CATEGORY_ID_TO_NAME } from "@/lib/categorization/rul
 import pdfParse from "pdf-parse"
 import { KEYWORD_MAPPING_RULES } from "@/lib/categorization/keyword-mapping"
 
-// Route segment config for Next.js App Router
-export const maxDuration = 30
+// Route segment config for Next.js App Router (large PDFs + pdf-parse)
+export const maxDuration = 60
+export const runtime = "nodejs"
 
 // ========================================
 // Category map for human-readable names
@@ -634,8 +635,9 @@ function parseWellsFargoTextExport(lines: string[]) {
 // ========================================
 // Convert parsed+categorized transactions to UI format
 // ========================================
-function toUIFormat(categorized: any[]) {
-  return categorized.map(tx => {
+function toUIFormat(categorized: any[] | undefined | null) {
+  const list = Array.isArray(categorized) ? categorized : []
+  return list.map(tx => {
     const categoryName = tx.category_id
       ? CAT[tx.category_id]?.name ?? CATEGORY_ID_TO_NAME[tx.category_id]?.name ?? "Uncategorized Expense"
       : "Uncategorized Expense"
@@ -653,65 +655,188 @@ function toUIFormat(categorized: any[]) {
 }
 
 // ========================================
-// MAIN UPLOAD HANDLER
+// Core parse + categorize (shared by JSON and multipart uploads)
+// ========================================
+async function processStatementBuffer(params: {
+  fileName: string
+  isPDF: boolean
+  accountName: string
+  accountType: string
+  buffer: Buffer
+}) {
+  const { fileName, isPDF, accountName, accountType } = params
+  const buffer = params.buffer
+
+  console.log("[upload] Processing:", fileName, "isPDF:", isPDF, "bytes:", buffer.length, "Account:", accountName, "type:", accountType)
+
+  let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
+
+  if (isPDF) {
+    console.log("[upload] Extracting PDF text server-side with pdf-parse")
+    const pdfData = await pdfParse(buffer)
+    const extractedText = pdfData.text
+    console.log("[upload] pdf-parse extracted text length:", extractedText.length, "pages:", pdfData.numpages)
+    if (extractedText.length < 20) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: `Could not read text from ${fileName}. Try downloading the statement again as a digital PDF (not a scan/photo).`,
+      }
+    }
+    parsed = parsePDFText(extractedText)
+    console.log(
+      `[upload] PDF parsed: ${parsed.transactions?.length ?? 0} txns for ${parsed.statementMonth} ${parsed.statementYear}`
+    )
+  } else {
+    const csvText = buffer.toString("utf-8")
+    parsed = parseCSVText(csvText)
+    console.log(`[upload] CSV parsed: ${parsed.transactions?.length ?? 0} txns`)
+  }
+
+  if (!parsed || !Array.isArray(parsed.transactions)) {
+    return {
+      ok: false as const,
+      status: 500,
+      error: "Parser returned undefined",
+    }
+  }
+
+  if (parsed.transactions.length === 0) {
+    return {
+      ok: false as const,
+      status: 400,
+      error: `No transactions found in ${fileName}. Supports Wells Fargo, Chase, and Barclays statements.`,
+    }
+  }
+
+  const categorized = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
+  const transactions = toUIFormat(categorized).map((t, i) => ({
+    ...t,
+    id: `${accountName}-${Date.now()}-${i}`,
+    account: accountName,
+  }))
+
+  const catCount = transactions.filter(t => t.category !== "Uncategorized Expense").length
+  console.log(`[upload] Done: ${transactions.length} txns, ${catCount} categorized`)
+
+  return {
+    ok: true as const,
+    transactions,
+    month: parsed.statementMonth,
+    year: parsed.statementYear,
+    message: `Processed ${transactions.length} transactions from ${fileName}`,
+  }
+}
+
+type ProcessOkResult = Extract<Awaited<ReturnType<typeof processStatementBuffer>>, { ok: true }>
+
+function uploadSuccessResponse(result: ProcessOkResult) {
+  console.log(
+    "[upload] Returning:",
+    result.transactions?.length,
+    "transactions",
+    "month:",
+    result.month,
+    "year:",
+    result.year
+  )
+  if (!result.transactions || !Array.isArray(result.transactions)) {
+    return NextResponse.json(
+      { error: "Parser returned no transaction array", success: false },
+      { status: 500 }
+    )
+  }
+  return NextResponse.json({
+    success: true,
+    transactions: result.transactions,
+    month: result.month,
+    year: result.year,
+    message: result.message,
+  })
+}
+
+// ========================================
+// MAIN UPLOAD HANDLER (multipart preferred — avoids huge base64 JSON bodies)
 // ========================================
 export async function POST(request: NextRequest) {
   try {
-    // Frontend sends JSON with file content already read
+    const contentType = request.headers.get("content-type") || ""
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData()
+      const file = formData.get("file")
+      if (!(file instanceof Blob)) {
+        return NextResponse.json({ error: "Missing file in form data", success: false }, { status: 400 })
+      }
+
+      const fileName = String(formData.get("fileName") || (file as File).name || "statement")
+      const accountName = String(formData.get("accountName") || "")
+      const accountType = String(formData.get("accountType") || "")
+      const isPDFFlag = String(formData.get("isPDF") || "")
+      const isPDF =
+        isPDFFlag === "true" ||
+        fileName.toLowerCase().endsWith(".pdf") ||
+        (file as File).type === "application/pdf"
+
+      if (!accountName || !accountType) {
+        return NextResponse.json({ error: "Missing account name or account type", success: false }, { status: 400 })
+      }
+
+      const arrayBuffer = await file.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+
+      let result: Awaited<ReturnType<typeof processStatementBuffer>>
+      try {
+        result = await processStatementBuffer({
+          fileName,
+          isPDF,
+          accountName,
+          accountType,
+          buffer,
+        })
+      } catch (processErr: unknown) {
+        const e = processErr instanceof Error ? processErr : new Error(String(processErr))
+        console.error("[upload] processStatementBuffer failed (multipart):", e.message, e.stack)
+        return NextResponse.json({ error: e.message || "Processing failed", success: false }, { status: 500 })
+      }
+
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error, success: false }, { status: result.status })
+      }
+
+      return uploadSuccessResponse(result)
+    }
+
+    // Legacy: JSON + base64 (kept for compatibility; avoid for large PDFs)
     const body = await request.json()
     const { fileName, fileContent, isPDF, accountName, accountType } = body
 
     if (!fileName || !fileContent || !accountName || !accountType) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+      return NextResponse.json({ error: "Missing required fields", success: false }, { status: 400 })
     }
 
-    console.log("[upload] Processing:", fileName, "isPDF:", isPDF, "contentLength:", fileContent.length, "Account:", accountName)
+    const buffer = isPDF ? Buffer.from(fileContent, "base64") : Buffer.from(String(fileContent), "utf-8")
 
-    let parsed: { transactions: any[]; statementMonth: string; statementYear: string }
-
-    // === PDF: decode base64, extract text server-side with pdf-parse (reliable Node.js library) ===
-    if (isPDF) {
-      const pdfBuffer = Buffer.from(fileContent, "base64")
-      console.log("[upload] Extracting PDF text server-side with pdf-parse, bytes:", pdfBuffer.length)
-      const pdfData = await pdfParse(pdfBuffer)
-      const extractedText = pdfData.text
-      console.log("[upload] pdf-parse extracted text length:", extractedText.length, "pages:", pdfData.numpages)
-      console.log("[upload] First 500 chars:", JSON.stringify(extractedText.substring(0, 500)))
-      parsed = parsePDFText(extractedText)
-      console.log(`[upload] PDF parsed: ${parsed.transactions.length} txns for ${parsed.statementMonth} ${parsed.statementYear}`)
-    }
-    // === CSV: raw text from frontend ===
-    else {
-      parsed = parseCSVText(fileContent)
-      console.log(`[upload] CSV parsed: ${parsed.transactions.length} txns`)
+    let result: Awaited<ReturnType<typeof processStatementBuffer>>
+    try {
+      result = await processStatementBuffer({
+        fileName,
+        isPDF: Boolean(isPDF),
+        accountName,
+        accountType,
+        buffer,
+      })
+    } catch (processErr: unknown) {
+      const e = processErr instanceof Error ? processErr : new Error(String(processErr))
+      console.error("[upload] processStatementBuffer failed (json):", e.message, e.stack)
+      return NextResponse.json({ error: e.message || "Processing failed", success: false }, { status: 500 })
     }
 
-    if (parsed.transactions.length === 0) {
-      return NextResponse.json({
-        error: `No transactions found in ${fileName}. Supports Wells Fargo, Chase, and Barclays statements.`,
-        success: false,
-      }, { status: 400 })
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error, success: false }, { status: result.status })
     }
 
-    // Categorize
-    const categorized = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
-    const transactions = toUIFormat(categorized).map((t, i) => ({
-      ...t,
-      id: `${accountName}-${Date.now()}-${i}`,
-      account: accountName,
-    }))
-
-    const catCount = transactions.filter(t => t.category !== "Uncategorized Expense").length
-    console.log(`[upload] Done: ${transactions.length} txns, ${catCount} categorized`)
-
-    return NextResponse.json({
-      success: true,
-      transactions,
-      month: parsed.statementMonth,
-      year: parsed.statementYear,
-      message: `Processed ${transactions.length} transactions from ${fileName}`,
-    })
-
+    return uploadSuccessResponse(result)
   } catch (error: any) {
     console.error("[upload] Unhandled error:", error.message, error.stack)
     return NextResponse.json({ error: error.message || "Upload failed", success: false }, { status: 500 })

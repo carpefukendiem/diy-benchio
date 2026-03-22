@@ -252,13 +252,20 @@ export default function CaliforniaBusinessAccounting() {
   }, [currentBusinessId])
 
   const handleStatementsUpdate = useCallback((statements: UploadedStatement[]) => {
-    const allTransactions = statements.flatMap((statement) => statement.transactions)
-    updateCurrentBusiness({
-      uploadedStatements: statements,
-      transactions: allTransactions,
-      lastSync: new Date().toLocaleString(),
-    })
-  }, [updateCurrentBusiness])
+    const statementTransactions = statements.flatMap((statement) => statement.transactions)
+    setBusinesses((prev) =>
+      prev.map((b) => {
+        if (b.id !== currentBusinessId) return b
+        const receiptTxns = b.transactions.filter((t) => t.id.startsWith("receipt-txn-"))
+        return {
+          ...b,
+          uploadedStatements: statements,
+          transactions: [...statementTransactions, ...receiptTxns],
+          lastSync: new Date().toLocaleString(),
+        }
+      }),
+    )
+  }, [currentBusinessId])
 
   const handleContinueToTransactions = useCallback(() => {
     setActiveTab("transactions")
@@ -399,10 +406,31 @@ export default function CaliforniaBusinessAccounting() {
     }
   }, [])
 
-  // Receipts handler
-  const handleReceiptsUpdate = useCallback((receipts: any[]) => {
-    updateCurrentBusiness({ receipts })
-  }, [updateCurrentBusiness])
+  // Receipts: keep receipt images + sync cash-expense lines into the transaction ledger
+  const handleReceiptsUpdate = useCallback(
+    (receipts: any[]) => {
+      setBusinesses((prev) =>
+        prev.map((b) => {
+          if (b.id !== currentBusinessId) return b
+          const nonReceiptTxns = b.transactions.filter((t) => !t.id.startsWith("receipt-txn-"))
+          const receiptTxns = receipts
+            .filter((r) => (r.amount || 0) > 0 && r.includeInLedger !== false)
+            .map((r) => ({
+              id: `receipt-txn-${r.id}`,
+              date: r.date,
+              description: `Cash receipt — ${r.merchantName || "Receipt"}`,
+              amount: r.amount,
+              category: r.category || "Uncategorized Expense",
+              isIncome: false,
+              account: "Cash / Receipt",
+              merchantName: r.merchantName,
+            }))
+          return { ...b, receipts, transactions: [...nonReceiptTxns, ...receiptTxns] }
+        }),
+      )
+    },
+    [currentBusinessId],
+  )
 
   // Tax bracket helpers now live in `lib/tax/brackets.ts`
 
