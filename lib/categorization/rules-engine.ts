@@ -761,7 +761,7 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   // Amazon defaults to Office Supplies (not personal) — user confirmed Amazon orders are business
   { pattern: 'amazon', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.55 },
-  { pattern: 'target', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.70 },
+  { pattern: 'target', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.70 },
   { pattern: 'walmart', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.70 },
   { pattern: 'best buy', match: 'contains', category_id: '00000000-0000-0000-0002-000000000046', is_personal: false, is_transfer: false, confidence: 0.75 },
   { pattern: 'ross stores', match: 'contains', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.80 },
@@ -804,6 +804,9 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'kroger', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'sprouts', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'aldi', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
+  // CVS / Rite Aid: large purchases (>$50) = personal; small (= office kitchen) handled by HIGH_PRIORITY
+  { pattern: 'cvs', match: 'contains', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'rite aid', match: 'contains', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false, confidence: 0.75 },
   { pattern: 'food 4 less', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'food4less', match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: "stater bros", match: 'contains', category_id: '00000000-0000-0000-0004-000000000002', is_personal: true, is_transfer: false, confidence: 0.80 },
@@ -839,10 +842,10 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'scgc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'clean wave car', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'nyx*clean', match: 'contains', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false, confidence: 0.90 },
-  { pattern: 'lemos feed', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.75 },
-  { pattern: 'lemos pet', match: 'contains', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.75 },
+  { pattern: 'lemos feed', match: 'contains', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false, confidence: 0.75 },
+  { pattern: 'lemos pet', match: 'contains', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false, confidence: 0.75 },
   { pattern: 'coinledger', match: 'contains', category_id: '00000000-0000-0000-0002-000000000012', is_personal: false, is_transfer: false, confidence: 0.97 },
-  { pattern: 'smoke 4 less', match: 'contains', category_id: '00000000-0000-0000-0002-000000000035', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'smoke 4 less', match: 'contains', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false, confidence: 0.80 },
   { pattern: 'ring basic plan', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'ring.com', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'avenu tax', match: 'contains', category_id: '00000000-0000-0000-0002-000000000041', is_personal: false, is_transfer: false, confidence: 0.95 },
@@ -877,61 +880,24 @@ export function smartFallback(tx: ParsedTransaction): {
   const desc = tx.description.toLowerCase();
   const amount = tx.amount;
 
-  // Credits / deposits over $100 are likely income or transfers
+  // Credits (income): no rule matched → Other Income (never Refunds Given as fallback)
   if (amount > 0) {
-    if (desc.includes('payment') || desc.includes('credit') || desc.includes('refund')) {
-      return { category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true, confidence: 0.45 };
-    }
-    // Larger credits are likely income
-    if (amount > 500) {
-      return { category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.40 };
-    }
-    // Smaller credits could be refunds
-    return { category_id: '00000000-0000-0000-0001-000000000002', is_personal: false, is_transfer: false, confidence: 0.35 };
+    return { category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.40 };
   }
 
-  // Debits: try to guess based on common keywords in the description
-  const absAmount = Math.abs(amount);
-
-  // Small charges under $30 that look like food (short descriptions, city abbreviations)
-  if (absAmount < 30 && desc.length < 40 && !desc.includes('transfer') && !desc.includes('fee')) {
-    // Very short merchant names with a city — likely restaurant/shop
-    const hasCityAbbr = /\b(ca|az|nv|tx|ny|fl|wa|or|co)\b/.test(desc);
-    if (hasCityAbbr) {
-      return { category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.40 };
-    }
-  }
-
-  // Charges between $5-200 with "purchase authorized on" are card swipes — likely business expense
-  if (desc.includes('purchase authorized on') || desc.includes('pos purchase') || desc.includes('pos debit')) {
-    // It's a point-of-sale purchase; default to Office Supplies (safe generic business category)
-    if (absAmount < 50) {
-      return { category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false, confidence: 0.35 };
-    }
-    // Larger POS purchases → personal shopping as safer default
-    return { category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false, confidence: 0.35 };
-  }
-
-  // Any "fee" or "charge" in description → Bank Fee
-  if (desc.includes('fee') || desc.includes('charge') || desc.includes('penalty')) {
-    return { category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false, confidence: 0.50 };
-  }
-
-  // DLR (Disneyland Resort) prefix → Client Gifts / Entertainment
-  if (desc.includes('dlr ') || desc.includes('dlr*')) {
-    return { category_id: '00000000-0000-0000-0002-000000000033', is_personal: false, is_transfer: false, confidence: 0.60 };
-  }
-
+  // Debits (expense): no rule matched → null (Uncategorized Expense); never guess
   return null;
 }
 
 // High-priority patterns that always win regardless of vendor rules
 // (e.g. overdraft fee on a GHL transaction must be Bank Fee, not Software)
+// amountMax: when set, only match when Math.abs(tx.amount) <= amountMax (e.g. small grocery = office kitchen)
 const HIGH_PRIORITY_PATTERNS: Array<{
   pattern: string;
   category_id: string;
   is_personal: boolean;
   is_transfer: boolean;
+  amountMax?: number;
 }> = [
   { pattern: 'overdraft fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
   { pattern: 'monthly service fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
@@ -954,9 +920,48 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   // TradingView is software, not crypto
   { pattern: 'tradingview', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'tradingviewv', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  // Prime Video = software/entertainment (personal entertainment, not Member Contribution)
+  // Prime Video = personal entertainment
   { pattern: 'prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
   { pattern: 'amazon prime', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+
+  // ============================
+  // DIGITAL MARKETING AGENCY — high-priority business expense rules
+  // ============================
+  { pattern: 'ouraring', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'oura ring', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'google one', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'affirm', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false },
+  { pattern: 'sprouts', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
+  { pattern: 'albertsons', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
+  { pattern: 'coldstone', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'cvs', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
+  { pattern: 'rite aid', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
+  { pattern: 'bream optometry', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false },
+  { pattern: 'bream opt', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false },
+  { pattern: 'target', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'smoke 4 less', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'milpas liquor', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'talevi', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'beverages & more', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'beverages more', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'dollartree', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'dollar tree', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'michaels', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'costco', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'trader joe', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'ralphs', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'pet house', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'tillys', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'tilly', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'nikepos', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'nike', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'jewelry couture', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'billabong', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'screaming frog', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'codecademy', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false },
+  { pattern: 'lemos feed', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'lemos pet', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'schwab brokerage', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
 ];
 
 export function categorizeByRules(
@@ -968,7 +973,9 @@ export function categorizeByRules(
 
     // Priority 0: High-priority patterns override all vendor rules
     for (const rule of HIGH_PRIORITY_PATTERNS) {
-      if (descLower.includes(rule.pattern)) {
+      const matchesPattern = descLower.includes(rule.pattern)
+      const withinAmount = rule.amountMax == null || Math.abs(tx.amount) <= rule.amountMax
+      if (matchesPattern && withinAmount) {
         return {
           ...tx,
           category_id: rule.category_id,
