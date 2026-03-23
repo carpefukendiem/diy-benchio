@@ -755,14 +755,14 @@ async function processStatementBuffer(params: {
     }
   }
 
-  const categorized = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
-  // Defensive: rules engine shape can drift; fallback to uncategorized transactions.
-  const safeCategorized = Array.isArray(categorized)
-    ? categorized
-    : parsed.transactions.map(t => ({
-        ...t,
-        category_id: null,
-      }))
+  let safeCategorized: any[]
+  try {
+    const result = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
+    safeCategorized = Array.isArray(result) ? result : parsed.transactions
+  } catch (e) {
+    console.error("[upload] categorizeByRules failed:", e)
+    safeCategorized = parsed.transactions
+  }
 
   const transactions = toUIFormat(safeCategorized).map((t, i) => ({
     ...t,
@@ -848,10 +848,20 @@ export async function POST(request: NextRequest) {
           accountType,
           buffer,
         })
-      } catch (processErr: unknown) {
-        const e = processErr instanceof Error ? processErr : new Error(String(processErr))
-        console.error("[upload] processStatementBuffer failed (multipart):", e.message, e.stack)
-        return NextResponse.json({ error: e.message || "Processing failed", success: false }, { status: 500 })
+      } catch (innerError: any) {
+        console.error(
+          "[upload] processStatementBuffer crashed:",
+          innerError?.message,
+          innerError?.stack?.substring(0, 500)
+        )
+        return NextResponse.json(
+          {
+            error: innerError?.message || "Processing failed",
+            success: false,
+            debug: innerError?.stack?.substring(0, 200),
+          },
+          { status: 500 }
+        )
       }
 
       if (!result.ok) {
@@ -880,10 +890,20 @@ export async function POST(request: NextRequest) {
         accountType,
         buffer,
       })
-    } catch (processErr: unknown) {
-      const e = processErr instanceof Error ? processErr : new Error(String(processErr))
-      console.error("[upload] processStatementBuffer failed (json):", e.message, e.stack)
-      return NextResponse.json({ error: e.message || "Processing failed", success: false }, { status: 500 })
+    } catch (innerError: any) {
+      console.error(
+        "[upload] processStatementBuffer crashed:",
+        innerError?.message,
+        innerError?.stack?.substring(0, 500)
+      )
+      return NextResponse.json(
+        {
+          error: innerError?.message || "Processing failed",
+          success: false,
+          debug: innerError?.stack?.substring(0, 200),
+        },
+        { status: 500 }
+      )
     }
 
     if (!result.ok) {
