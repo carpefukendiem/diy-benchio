@@ -551,9 +551,9 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'schwab brokerage', match: 'contains', category_id: '00000000-0000-0000-0003-000000000007', is_personal: false, is_transfer: true, confidence: 0.90 },
   { pattern: 'schwab moneylink', match: 'contains', category_id: '00000000-0000-0000-0003-000000000007', is_personal: false, is_transfer: true, confidence: 0.90 },
 
-  // Business Treasury Investment (crypto held for business)
-  { pattern: 'kraken', match: 'contains', category_id: '00000000-0000-0000-0002-000000000038', is_personal: false, is_transfer: false, confidence: 0.85 },
-  { pattern: 'coinbase', match: 'contains', category_id: '00000000-0000-0000-0002-000000000038', is_personal: false, is_transfer: false, confidence: 0.85 },
+  // Crypto exchange flows are personal by default unless user explicitly re-categorizes.
+  { pattern: 'kraken', match: 'contains', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: false, confidence: 0.90 },
+  { pattern: 'coinbase', match: 'contains', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: false, confidence: 0.90 },
 
   // ============================
   // OWNER DRAW (0003-06) — NOT on Schedule C

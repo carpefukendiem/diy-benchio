@@ -39,6 +39,15 @@ interface FileProgress {
   year?: string
 }
 
+type AccountType = "bank" | "credit_card" | "personal" | "investment"
+
+interface QueuedUploadFile {
+  id: string
+  file: File
+  accountName: string
+  accountType: AccountType
+}
+
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -73,12 +82,13 @@ function nextFrame(): Promise<void> {
 
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
-  const [accountType, setAccountType] = useState<"bank" | "credit_card" | "personal" | "investment">("bank")
+  const [accountType, setAccountType] = useState<AccountType>("bank")
   const [isUploading, setIsUploading] = useState(false)
   const [savedAccountNames, setSavedAccountNames] = useState<string[]>([])
   const [isComboboxOpen, setIsComboboxOpen] = useState(false)
   const [fileProgress, setFileProgress] = useState<FileProgress[]>([])
   const [allParsedTransactions, setAllParsedTransactions] = useState<any[]>([])
+  const [queuedFiles, setQueuedFiles] = useState<QueuedUploadFile[]>([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -103,20 +113,24 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     localStorage.setItem("savedAccountNames", JSON.stringify(updated))
   }
 
-  const buildNewStatements = (taggedTransactions: any[], filesCount: number): UploadedStatement[] => {
+  const buildNewStatements = (
+    taggedTransactions: any[],
+    filesCount: number,
+    accountTypeByAccount: Record<string, AccountType>
+  ): UploadedStatement[] => {
     const statementsByMonth = new Map<string, any[]>()
     taggedTransactions.forEach((t) => {
-      const key = t.date.substring(0, 7)
+      const key = `${t.account || "Unknown Account"}|${t.date.substring(0, 7)}`
       if (!statementsByMonth.has(key)) statementsByMonth.set(key, [])
       statementsByMonth.get(key)!.push(t)
     })
 
     return Array.from(statementsByMonth.entries()).map(([ym, txns], idx) => {
-      const [year, monthNum] = ym.split("-")
+      const [txnAccountName, year, monthNum] = ym.split("|")
       return {
-        id: `${accountName}-${year}-${MONTHS[parseInt(monthNum) - 1]}-${Date.now()}-${idx}`,
-        accountName,
-        accountType,
+        id: `${txnAccountName}-${year}-${MONTHS[parseInt(monthNum) - 1]}-${Date.now()}-${idx}`,
+        accountName: txnAccountName,
+        accountType: accountTypeByAccount[txnAccountName] || "bank",
         month: MONTHS[parseInt(monthNum) - 1] || "Unknown",
         year,
         fileName: `${filesCount} file${filesCount === 1 ? "" : "s"}`,
@@ -128,8 +142,13 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   }
 
   /** Merge parsed transactions into app state and advance the wizard. */
-  const commitImported = (taggedTransactions: any[], filesCount: number, clearFileProgress = true) => {
-    const newStatements = buildNewStatements(taggedTransactions, filesCount)
+  const commitImported = (
+    taggedTransactions: any[],
+    filesCount: number,
+    accountTypeByAccount: Record<string, AccountType>,
+    clearFileProgress = true
+  ) => {
+    const newStatements = buildNewStatements(taggedTransactions, filesCount, accountTypeByAccount)
     onStatementsUpdate([...existingStatements, ...newStatements])
     toast({
       title: "Statements imported",
@@ -138,10 +157,11 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     if (clearFileProgress) setFileProgress([])
     setAllParsedTransactions([])
     setAccountName("")
+    setQueuedFiles([])
     if (onContinue) setTimeout(() => onContinue(), 500)
   }
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files || files.length === 0) return
 
@@ -150,36 +170,48 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       return
     }
 
-    // =============================================
-    // DUPLICATE TRANSACTION DEDUPLICATION (per-account)
-    // Build a set of already-imported transaction keys scoped to this account only.
-    // Different accounts can have identical transactions (same vendor/amount/date).
-    // =============================================
-    const existingFileKeys = new Set<string>()
-    existingStatements
-      .filter(s => s.accountName === accountName)
-      .forEach(s => {
-        s.transactions.forEach(t => {
-          existingFileKeys.add(`${accountName}|${t.date}|${t.description}|${t.amount}`)
-        })
-      })
-
-    // All selected files are processed — duplicate transactions are filtered
-    // at the transaction level (by account+date+description+amount), not by filename.
-    // This prevents false "already uploaded" blocks when re-uploading after a data clear.
-    const filesToProcess: File[] = Array.from(files)
-
-    setIsUploading(true)
-    saveAccountName(accountName)
-
-    const progress: FileProgress[] = filesToProcess.map(f => ({
-      fileName: f.name, status: "pending" as const, transactionCount: 0,
+    const filesToQueue: QueuedUploadFile[] = Array.from(files).map((file, idx) => ({
+      id: `${Date.now()}-${idx}-${file.name}`,
+      file,
+      accountName,
+      accountType,
+    }))
+    setQueuedFiles(filesToQueue)
+    const progress: FileProgress[] = filesToQueue.map(f => ({
+      fileName: f.file.name, status: "pending" as const, transactionCount: 0,
     }))
     setFileProgress(progress)
+    event.target.value = ""
+  }
+
+  const updateQueuedFile = (id: string, updates: Partial<Pick<QueuedUploadFile, "accountName" | "accountType">>) => {
+    setQueuedFiles(prev => prev.map(q => (q.id === id ? { ...q, ...updates } : q)))
+  }
+
+  const startQueuedUpload = async () => {
+    if (queuedFiles.length === 0) return
+    if (queuedFiles.some(q => !q.accountName.trim())) {
+      toast({ title: "Missing Account Name", description: "Each file must have an account name before upload.", variant: "destructive" })
+      return
+    }
+
+    setIsUploading(true)
+    queuedFiles.forEach(q => saveAccountName(q.accountName))
+
+    // =============================================
+    // DUPLICATE TRANSACTION DEDUPLICATION (per-account)
+    // =============================================
+    const existingFileKeys = new Set<string>()
+    existingStatements.forEach(s => {
+      s.transactions.forEach(t => {
+        existingFileKeys.add(`${s.accountName}|${t.date}|${t.description}|${t.amount}`)
+      })
+    })
+
     await nextFrame()
 
     toast({
-      title: `Processing ${filesToProcess.length} file${filesToProcess.length === 1 ? "" : "s"}`,
+      title: `Processing ${queuedFiles.length} file${queuedFiles.length === 1 ? "" : "s"}`,
       description: "Uploading to the server (one file at a time). Keep this tab open.",
     })
 
@@ -187,8 +219,14 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     let allTxns: any[] = []
     const fileErrors: { name: string; message: string }[] = []
 
-    for (let i = 0; i < filesToProcess.length; i++) {
-      const file = filesToProcess[i]
+    const accountTypeByAccount: Record<string, AccountType> = {}
+    queuedFiles.forEach(q => { accountTypeByAccount[q.accountName] = q.accountType })
+
+    for (let i = 0; i < queuedFiles.length; i++) {
+      const queued = queuedFiles[i]
+      const file = queued.file
+      const fileAccountName = queued.accountName
+      const fileAccountType = queued.accountType
       setFileProgress(prev => prev.map((p, idx) => idx === i ? { ...p, status: "uploading" } : p))
       await nextFrame()
 
@@ -200,8 +238,8 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         formData.append("file", file, file.name)
         formData.append("fileName", file.name)
         formData.append("isPDF", isPDF ? "true" : "false")
-        formData.append("accountName", accountName)
-        formData.append("accountType", accountType)
+        formData.append("accountName", fileAccountName)
+        formData.append("accountType", fileAccountType)
 
         const response = await fetch("/api/statements/upload", {
           method: "POST",
@@ -236,7 +274,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             // Remove any transactions that already exist
             // =============================================
             const uniqueTransactions = data.transactions.filter((t: any) => {
-              const key = `${accountName}|${t.date}|${t.description}|${t.amount}`
+              const key = `${fileAccountName}|${t.date}|${t.description}|${t.amount}`
               return !existingFileKeys.has(key)
             })
 
@@ -264,7 +302,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
             // Add new transactions to the existingFileKeys set so subsequent files in the same batch also get deduped
             uniqueTransactions.forEach((t: any) => {
-              existingFileKeys.add(`${accountName}|${t.date}|${t.description}|${t.amount}`)
+              existingFileKeys.add(`${fileAccountName}|${t.date}|${t.description}|${t.amount}`)
             })
           } else if (data.error) {
             setFileProgress(prev => prev.map((p, idx) =>
@@ -294,11 +332,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
 
     setIsUploading(false)
     setAllParsedTransactions(allTxns)
-    event.target.value = ""
 
     if (allTxns.length > 0) {
       // Keep per-file success visible briefly, then clear (commit still runs immediately).
-      commitImported(autoTagForAccountType(allTxns), successFiles.length, false)
+      commitImported(autoTagForAccountType(allTxns, accountTypeByAccount), successFiles.length, accountTypeByAccount, false)
       window.setTimeout(() => setFileProgress([]), 2200)
       if (fileErrors.length > 0) {
         toast({
@@ -316,14 +353,17 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     }
   }
 
-  const autoTagForAccountType = (txns: any[]) => {
-    if (accountType === "personal") {
-      return txns.map((t) => ({ ...t, category: "Personal Expense", isIncome: false, isPersonal: true }))
-    }
-    if (accountType === "investment") {
-      return txns.map((t) => ({ ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }))
-    }
-    return txns
+  const autoTagForAccountType = (txns: any[], accountTypeByAccount: Record<string, AccountType>) => {
+    return txns.map((t) => {
+      const type = accountTypeByAccount[t.account] || "bank"
+      if (type === "personal") {
+        return { ...t, category: "Personal Expense", isIncome: false, isPersonal: true }
+      }
+      if (type === "investment") {
+        return { ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }
+      }
+      return t
+    })
   }
 
   const handleDeleteStatement = (id: string) => {
@@ -403,6 +443,48 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
               <Input type="file" accept=".pdf,.csv" multiple onChange={handleFileUpload} disabled={isUploading} className="cursor-pointer" />
               <p className="mt-3 text-sm text-muted-foreground">Select all 12 months at once (Cmd+A). PDF or CSV.</p>
             </div>
+
+            {queuedFiles.length > 0 && !isUploading && (
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">Review file account assignments before upload</p>
+                    <p className="text-xs text-muted-foreground">
+                      Set account name/type per file to prevent personal and business mixing.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => { setQueuedFiles([]); setFileProgress([]) }}>
+                      Clear Queue
+                    </Button>
+                    <Button size="sm" onClick={startQueuedUpload}>
+                      Start Upload
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {queuedFiles.map((q) => (
+                    <div key={q.id} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center border rounded p-2">
+                      <div className="text-sm truncate">{q.file.name}</div>
+                      <Input
+                        value={q.accountName}
+                        onChange={(e) => updateQueuedFile(q.id, { accountName: e.target.value })}
+                        placeholder="Account name"
+                      />
+                      <Select value={q.accountType} onValueChange={(v) => updateQueuedFile(q.id, { accountType: v as AccountType })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bank">Business Bank Account</SelectItem>
+                          <SelectItem value="credit_card">Business Credit Card</SelectItem>
+                          <SelectItem value="personal">Personal Account (auto-excluded from taxes)</SelectItem>
+                          <SelectItem value="investment">Investment / Brokerage (auto-excluded from taxes)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

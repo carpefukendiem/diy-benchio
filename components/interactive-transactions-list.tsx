@@ -253,8 +253,11 @@ export function InteractiveTransactionsList({
     return missing
   }, [phoneTransactions])
 
-  const krakenTransactions = useMemo(() => {
-    return transactions.filter((t) => (t.description || "").toLowerCase().includes("kraken"))
+  const cryptoExchangeTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const dl = (t.description || "").toLowerCase()
+      return dl.includes("kraken") || dl.includes("coinbase")
+    })
   }, [transactions])
 
   const duplicateGroups = useMemo(() => {
@@ -308,15 +311,15 @@ export function InteractiveTransactionsList({
     }
   }
 
-  const handleMarkKrakenPersonal = async () => {
-    if (krakenTransactions.length === 0) return
-    const updates = krakenTransactions.map((t) => ({
+  const handleMarkCryptoPersonal = async () => {
+    if (cryptoExchangeTransactions.length === 0) return
+    const updates = cryptoExchangeTransactions.map((t) => ({
       id: t.id,
       updates: { category: "Crypto / Investments", isIncome: false },
     }))
     await onBulkUpdate(updates)
     toast({
-      title: "Kraken transactions updated",
+      title: "Crypto exchange transactions updated",
       description: `${updates.length} transaction${updates.length === 1 ? "" : "s"} marked as personal/excluded.`,
     })
   }
@@ -606,11 +609,11 @@ export function InteractiveTransactionsList({
                 {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
               </Button>
             </div>
-            {krakenTransactions.length > 0 && (
+            {cryptoExchangeTransactions.length > 0 && (
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{krakenTransactions.length} Kraken txn detected</Badge>
-                <Button size="sm" variant="secondary" onClick={handleMarkKrakenPersonal}>
-                  Mark Kraken as Personal/Excluded
+                <Badge variant="outline">{cryptoExchangeTransactions.length} Kraken/Coinbase txn detected</Badge>
+                <Button size="sm" variant="secondary" onClick={handleMarkCryptoPersonal}>
+                  Mark Kraken/Coinbase as Personal/Excluded
                 </Button>
               </div>
             )}
