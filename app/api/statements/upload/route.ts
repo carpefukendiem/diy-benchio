@@ -342,6 +342,29 @@ function parseBarclaysPDFText(text: string) {
 
     const date = `${year}-${txMon}-${txDay}`
 
+    // Barclays sometimes extracts "N/A" artifacts into the tail for fee lines.
+    // If it looks like a late payment fee / interest charge, we must treat it as a debit (expense),
+    // never as a credit.
+    const tailLower = tail.toLowerCase()
+    if (/late payment fee|late payment|late fee|interest charge/i.test(tailLower)) {
+      const feeMatch = tail.match(/^(.*?)\$([\d,]+\.\d{2})$/)
+      if (feeMatch) {
+        const desc = (feeMatch[1] || tail).replace(/N\/A/i, "").replace(/\s+/g, " ").trim()
+        const amount = parseFloat(feeMatch[2].replace(/,/g, ""))
+        if (amount > 0 && desc.length > 1) {
+          txns.push({
+            date,
+            description: desc.substring(0, 200),
+            amount,
+            type: "debit",
+            raw_line: line.substring(0, 200),
+          })
+        }
+        continue
+      }
+      // If we can't parse the fee amount, fall through to other heuristics.
+    }
+
     // Payment / credit lines
     const payment = tail.match(/^(.*?)(?:N\/A)?-?\$([\d,]+\.\d{2})$/i)
     if (payment && /payment|thank you|received|n\/a/i.test(tail)) {

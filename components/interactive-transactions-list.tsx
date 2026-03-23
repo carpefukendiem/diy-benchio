@@ -160,6 +160,7 @@ export function InteractiveTransactionsList({
   const [manualAmount, setManualAmount] = useState("")
   const [manualCategory, setManualCategory] = useState("Phone & Internet Expense")
   const [manualIsIncome, setManualIsIncome] = useState(false)
+  const [auditToolkitExpanded, setAuditToolkitExpanded] = useState(false)
   const { toast } = useToast()
 
   const highlightedSet = useMemo(() => new Set(highlightedTransactionIds), [highlightedTransactionIds])
@@ -261,6 +262,7 @@ export function InteractiveTransactionsList({
   }, [transactions])
 
   const duplicateGroups = useMemo(() => {
+    if (!auditToolkitExpanded) return []
     const groups = new Map<string, Transaction[]>()
     for (const t of transactions) {
       const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
@@ -272,9 +274,10 @@ export function InteractiveTransactionsList({
     return Array.from(groups.values())
       .filter((g) => g.length > 1)
       .sort((a, b) => b.length - a.length)
-  }, [transactions])
+  }, [transactions, auditToolkitExpanded])
 
   const recurringCoverage = useMemo(() => {
+    if (!auditToolkitExpanded) return { count: 0, coveredMonths: 0, missingMonths: [] as number[] }
     const tx = transactions.filter((t) => {
       const isYear = (t.date || "").startsWith(String(auditYear))
       return isYear && (t.category || "") === recurringCategory
@@ -285,7 +288,7 @@ export function InteractiveTransactionsList({
     const missing: number[] = []
     for (let m = 1; m <= 12; m++) if (!present.has(m)) missing.push(m)
     return { count: tx.length, coveredMonths: present.size, missingMonths: missing }
-  }, [transactions, auditYear, recurringCategory])
+  }, [transactions, auditYear, recurringCategory, auditToolkitExpanded])
 
   const handleAddManualTransaction = async () => {
     const amount = Number(manualAmount)
@@ -605,9 +608,19 @@ export function InteractiveTransactionsList({
                   {missingPhoneMonths.length > 0 ? ` (missing ${missingPhoneMonths.length})` : ""}
                 </p>
               </div>
-              <Button size="sm" variant="outline" onClick={() => setShowManualForm((v) => !v)}>
-                {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowManualForm((v) => !v)}>
+                  {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAuditToolkitExpanded((v) => !v)}
+                  title="Show/hide heavy audit panels"
+                >
+                  {auditToolkitExpanded ? "Hide details" : "Show details"}
+                </Button>
+              </div>
             </div>
             {cryptoExchangeTransactions.length > 0 && (
               <div className="flex items-center gap-2">
@@ -623,46 +636,50 @@ export function InteractiveTransactionsList({
               </p>
             )}
 
-            <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
-              <p className="text-xs font-medium mb-1">Monthly completeness checker</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <Select value={recurringCategory} onValueChange={setRecurringCategory}>
-                  <SelectTrigger className="w-[250px] h-8">
-                    <SelectValue placeholder="Pick category to audit" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Badge variant="outline">{recurringCoverage.coveredMonths}/12 months covered</Badge>
-                {recurringCoverage.missingMonths.length > 0 ? (
-                  <span className="text-xs text-muted-foreground">
-                    Missing: {recurringCoverage.missingMonths.map((m) => String(m).padStart(2, "0")).join(", ")}
-                  </span>
-                ) : (
-                  <span className="text-xs text-green-700 dark:text-green-300">No missing months</span>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
-              <p className="text-xs font-medium mb-1">Duplicate detector</p>
-              {duplicateGroups.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No obvious duplicates by date + amount + merchant/description.</p>
-              ) : (
-                <div className="space-y-1">
-                  {duplicateGroups.slice(0, 5).map((group, idx) => (
-                    <p key={idx} className="text-xs text-muted-foreground">
-                      {group.length}x — {group[0].date} — ${group[0].amount.toFixed(2)} — {(group[0].merchantName || group[0].description).slice(0, 80)}
-                    </p>
-                  ))}
+            {auditToolkitExpanded && (
+              <>
+                <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
+                  <p className="text-xs font-medium mb-1">Monthly completeness checker</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select value={recurringCategory} onValueChange={setRecurringCategory}>
+                      <SelectTrigger className="w-[250px] h-8">
+                        <SelectValue placeholder="Pick category to audit" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Badge variant="outline">{recurringCoverage.coveredMonths}/12 months covered</Badge>
+                    {recurringCoverage.missingMonths.length > 0 ? (
+                      <span className="text-xs text-muted-foreground">
+                        Missing: {recurringCoverage.missingMonths.map((m) => String(m).padStart(2, "0")).join(", ")}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-green-700 dark:text-green-300">No missing months</span>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
+
+                <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
+                  <p className="text-xs font-medium mb-1">Duplicate detector</p>
+                  {duplicateGroups.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No obvious duplicates by date + amount + merchant/description.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {duplicateGroups.slice(0, 5).map((group, idx) => (
+                        <p key={idx} className="text-xs text-muted-foreground">
+                          {group.length}x — {group[0].date} — ${group[0].amount.toFixed(2)} — {(group[0].merchantName || group[0].description).slice(0, 80)}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {showManualForm && (
