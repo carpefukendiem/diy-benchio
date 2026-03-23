@@ -132,6 +132,11 @@ export default function CaliforniaBusinessAccounting() {
   const [showWizard, setShowWizard] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
+  const [highlightedTransactionIds, setHighlightedTransactionIds] = useState<string[]>([])
+  const [forceAllUndoState, setForceAllUndoState] = useState<{
+    previousTransactions: Transaction[]
+    changedIds: string[]
+  } | null>(null)
   const { toast } = useToast()
 
   const [activeTab, setActiveTab] = useState("statements")
@@ -178,6 +183,12 @@ export default function CaliforniaBusinessAccounting() {
       localStorage.setItem("lastBusinessId", currentBusinessId)
     }
   }, [currentBusinessId])
+
+  useEffect(() => {
+    if (highlightedTransactionIds.length === 0) return
+    const timeout = window.setTimeout(() => setHighlightedTransactionIds([]), 8000)
+    return () => window.clearTimeout(timeout)
+  }, [highlightedTransactionIds])
 
   const handleWizardComplete = useCallback((profile: TaxProfile) => {
     const newBusiness: BusinessData = {
@@ -390,12 +401,43 @@ export default function CaliforniaBusinessAccounting() {
       return t
     })
 
+    const changedIds = newTransactions
+      .filter((next, idx) => {
+        const prev = currentBusiness.transactions[idx]
+        if (!prev) return false
+        return prev.category !== next.category || prev.isIncome !== next.isIncome
+      })
+      .map((t) => t.id)
+
+    if (forceAll) {
+      setForceAllUndoState({
+        previousTransactions: currentBusiness.transactions,
+        changedIds,
+      })
+      setHighlightedTransactionIds(changedIds)
+    }
+
     updateCurrentBusiness({ transactions: newTransactions })
     toast({
       title: `Re-categorized ${updated} transactions`,
       description: updated > 0 ? "Review the changes in the Transactions tab" : "All transactions already categorized",
     })
   }, [currentBusiness, updateCurrentBusiness, toast])
+
+  const handleUndoForceAll = useCallback(() => {
+    if (!forceAllUndoState) {
+      toast({ title: "Nothing to undo", description: "No Force All changes available to revert." })
+      return
+    }
+
+    updateCurrentBusiness({ transactions: forceAllUndoState.previousTransactions })
+    setHighlightedTransactionIds(forceAllUndoState.changedIds)
+    setForceAllUndoState(null)
+    toast({
+      title: "Force All reverted",
+      description: "Previous transaction categories were restored.",
+    })
+  }, [forceAllUndoState, updateCurrentBusiness, toast])
 
   // Cloud load handler — replaces localStorage data with Supabase data
   const handleCloudLoad = useCallback((cloudBusinesses: BusinessData[]) => {
@@ -654,6 +696,21 @@ export default function CaliforniaBusinessAccounting() {
                 <Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => handleRecategorize(true)} disabled={!currentBusiness || currentBusiness.transactions.length === 0} title="Re-run all rules on every transaction, overriding previous categorizations">
                   <RefreshCw className="h-3.5 w-3.5" /> Force All
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={handleUndoForceAll}
+                  disabled={!forceAllUndoState}
+                  title="Revert the most recent Force All changes"
+                >
+                  Undo Force All
+                </Button>
+                {forceAllUndoState && (
+                  <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-700">
+                    {forceAllUndoState.changedIds.length} changes highlighted
+                  </Badge>
+                )}
                 <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
                 <BusinessSelector
                   businesses={businessSelectorData}
@@ -811,6 +868,7 @@ export default function CaliforniaBusinessAccounting() {
                     onBulkUpdate={bulkUpdateTransactions}
                     onRefresh={() => {}}
                     isLoading={isLoading}
+                    highlightedTransactionIds={highlightedTransactionIds}
                   />
                 </Suspense>
               )}

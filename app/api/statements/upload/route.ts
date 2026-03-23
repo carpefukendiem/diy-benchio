@@ -205,20 +205,14 @@ function parseChasePDFText(text: string) {
 
   const txns: any[] = []
 
-  // Find the transaction section
+  // Chase format varies by export version; don't hard-fail if this exact header is missing.
   const txnSectionIdx = text.indexOf("Merchant  Name or Transaction Description")
-  if (txnSectionIdx === -1) {
-    console.log("[chase-pdf] No transaction section found")
-    return { transactions: txns, statementMonth: stmtMonth, statementYear: String(year) }
-  }
-
-  const txnText = text.substring(txnSectionIdx)
+  const txnText = txnSectionIdx >= 0 ? text.substring(txnSectionIdx) : text
   const lines = txnText.split("\n")
 
-  // Each transaction line: "MM/DD     DESCRIPTION<amount>" where amount has no preceding space
+  // Each transaction line is usually "MM/DD  DESCRIPTION  AMOUNT" (amount may or may not be spaced).
   // Negative amounts = credits (payments), positive = debits (charges)
-  // Pattern: MM/DD followed by spaces, then description ending with a number (possibly negative)
-  const TXN_LINE_RE = /^(\d{2})\/(\d{2})\s{3,}(.+?)(-?[\d,]+\.\d{2})$/
+  const TXN_LINE_RE = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s*(-?[\d,]+\.\d{2})$/
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -328,49 +322,55 @@ function parseBarclaysPDFText(text: string) {
 
   const txns: any[] = []
 
-  // Regex: two adjacent "Mon DD" groups (no space between them as pdf-parse concatenates)
-  // then the description, then the amount suffix
-  //
-  // Payment:  Mon DD Mon DD <desc> N/A -$<amt>   (credit)
-  // Purchase: Mon DD Mon DD <desc> <1-4digit points> $<amt>  (debit)
-  // Fee/Int:  Mon DD Mon DD <desc> $<amt>   (debit, no points)
-  //
-  // The key insight: N/A appears BEFORE the amount for payments,
-  // and a small integer (points) appears BEFORE $ for purchases.
+  // Parsing per-line is more resilient to PDF extraction spacing variations.
+  const lines = text.split("\n")
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (/^(total|no transaction|no payment|no fees|to see activity|purchase activity|2\d{3} year|this year|interest charge calc|type of balance|standard purchase|prior standard|balance transfer|cash advance|visit barclays|page \d|transaction date)/i.test(line)) continue
 
-  const TXN_RE = /([A-Z][a-z]{2})\s{0,1}(\d{1,2})([A-Z][a-z]{2})\s{0,1}\d{1,2}(.+?)(?:(N\/A)-?\$?([\d,]+\.\d{2})|(\d{1,4})\$?([\d,]+\.\d{2})|\$?([\d,]+\.\d{2}))$/gm
+    // Transaction date + posting date are often concatenated: "Apr 14Apr 14..."
+    const head = line.match(/^([A-Za-z]{3})\s*(\d{1,2})([A-Za-z]{3})\s*\d{1,2}(.+)$/)
+    if (!head) continue
 
-  let m
-  while ((m = TXN_RE.exec(text)) !== null) {
-    const txMonAbbr = m[1]
-    const txDay = String(parseInt(m[2])).padStart(2, "0")
+    const txMonAbbrRaw = head[1]
+    const txMonAbbr = txMonAbbrRaw.charAt(0).toUpperCase() + txMonAbbrRaw.slice(1, 3).toLowerCase()
+    const txDay = String(parseInt(head[2])).padStart(2, "0")
     const txMon = barclaysMonths[txMonAbbr] || "01"
-    let desc = (m[4] || "").trim()
-
-    // Skip non-transaction lines
-    if (!desc || desc.length < 3) continue
-    if (/^(total|no transaction|no payment|no fees|to see activity|purchase activity|2\d{3} year|this year|interest charge calc|type of balance|standard purchase|prior standard|balance transfer|cash advance|visit barclays|page \d|transaction date)/i.test(desc)) continue
+    const tail = (head[4] || "").trim()
+    if (!tail || tail.length < 3) continue
 
     const date = `${year}-${txMon}-${txDay}`
 
-    if (m[5] === "N/A") {
-      // Payment / credit
-      const amount = parseFloat(m[6].replace(/,/g, ""))
+    // Payment / credit lines
+    const payment = tail.match(/^(.*?)(?:N\/A)?-?\$([\d,]+\.\d{2})$/i)
+    if (payment && /payment|thank you|received|n\/a/i.test(tail)) {
+      const amount = parseFloat(payment[2].replace(/,/g, ""))
+      const desc = (payment[1] || tail).replace(/N\/A/i, "").replace(/-?\$[\d,]+\.\d{2}\s*$/i, "").trim()
       if (amount > 0) {
-        txns.push({ date, description: desc.substring(0, 200), amount, type: "credit", raw_line: m[0].trim() })
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "credit", raw_line: line.substring(0, 200) })
       }
-    } else if (m[7] !== undefined) {
-      // Purchase — has points integer before $
-      const amount = parseFloat(m[8].replace(/,/g, ""))
-      if (amount > 0) {
-        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: m[0].trim() })
+      continue
+    }
+
+    // Purchase with points suffix before amount, e.g. "...CA99$32.95"
+    const purchase = tail.match(/^(.*?)(\d{1,4})\$([\d,]+\.\d{2})$/)
+    if (purchase) {
+      const amount = parseFloat(purchase[3].replace(/,/g, ""))
+      const desc = (purchase[1] || "").trim()
+      if (amount > 0 && desc.length > 1) {
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: line.substring(0, 200) })
       }
-    } else if (m[9] !== undefined) {
-      // Fee or interest — no points, just $amount directly
-      const amount = parseFloat(m[9].replace(/,/g, ""))
-      // Only include real fee/interest lines, not summary rows
-      if (amount > 0 && /fee|interest charge|late payment/i.test(desc) && !/^total/i.test(desc)) {
-        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: m[0].trim() })
+      continue
+    }
+
+    // Generic amount-at-end line
+    const generic = tail.match(/^(.*?)\$([\d,]+\.\d{2})$/)
+    if (generic) {
+      const amount = parseFloat(generic[2].replace(/,/g, ""))
+      const desc = (generic[1] || "").trim()
+      if (amount > 0 && desc.length > 1) {
+        txns.push({ date, description: desc.substring(0, 200), amount, type: "debit", raw_line: line.substring(0, 200) })
       }
     }
   }

@@ -30,6 +30,7 @@ interface InteractiveTransactionsListProps {
   onBulkUpdate: (updates: Array<{ id: string; updates: Partial<Transaction> }>) => Promise<void>
   onRefresh: () => void
   isLoading: boolean
+  highlightedTransactionIds?: string[]
 }
 
 export const CATEGORIES = [
@@ -128,6 +129,7 @@ export function InteractiveTransactionsList({
   onBulkUpdate,
   onRefresh,
   isLoading,
+  highlightedTransactionIds = [],
 }: InteractiveTransactionsListProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
@@ -136,6 +138,8 @@ export function InteractiveTransactionsList({
   const [editingTransaction, setEditingTransaction] = useState<string | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
   const { toast } = useToast()
+
+  const highlightedSet = useMemo(() => new Set(highlightedTransactionIds), [highlightedTransactionIds])
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
@@ -499,7 +503,7 @@ export function InteractiveTransactionsList({
               key={transaction.id}
               className={`grid grid-cols-12 gap-4 p-3 border rounded-lg hover:bg-muted transition-colors ${
                 selectedTransactions.has(transaction.id) ? "bg-accent border-border" : ""
-              }`}
+              } ${highlightedSet.has(transaction.id) ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""}`}
             >
               <div className="col-span-1 flex items-center">
                 <Checkbox
