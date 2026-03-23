@@ -210,8 +210,27 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
         console.log(`[upload] Response for ${file.name}: status=${response.status}`)
 
         if (response.ok) {
-          const data = await response.json()
-          if (data.transactions && data.transactions.length > 0) {
+          let data: any
+          try {
+            const text = await response.text()
+            console.log("[upload] Raw response for", file.name, ":", text.substring(0, 500))
+            data = JSON.parse(text)
+          } catch (parseErr) {
+            console.error("[upload] JSON parse failed for", file.name, parseErr)
+            setFileProgress(prev => prev.map((p, idx) =>
+              idx === i ? { ...p, status: "error", error: "Server returned invalid response" } : p
+            ))
+            continue
+          }
+
+          if (!data) {
+            setFileProgress(prev => prev.map((p, idx) =>
+              idx === i ? { ...p, status: "error", error: "Empty response from server" } : p
+            ))
+            continue
+          }
+
+          if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
             // =============================================
             // DUPLICATE TRANSACTION DEDUPLICATION
             // Remove any transactions that already exist
@@ -247,9 +266,13 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
             uniqueTransactions.forEach((t: any) => {
               existingFileKeys.add(`${accountName}|${t.date}|${t.description}|${t.amount}`)
             })
+          } else if (data.error) {
+            setFileProgress(prev => prev.map((p, idx) =>
+              idx === i ? { ...p, status: "error", error: data.error } : p
+            ))
           } else {
             setFileProgress(prev => prev.map((p, idx) =>
-              idx === i ? { ...p, status: "error", error: "No transactions found" } : p
+              idx === i ? { ...p, status: "error", error: "No transactions found in file" } : p
             ))
           }
         } else {

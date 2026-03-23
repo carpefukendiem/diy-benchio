@@ -35,8 +35,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className={`font-sans antialiased`}>
+    // suppressHydrationWarning: browser extensions (e.g. Grammarly) inject attributes onto
+    // <html>/<body> before hydrate, which would otherwise mismatch server-rendered HTML.
+    <html lang="en" suppressHydrationWarning>
+      <body className="font-sans antialiased" suppressHydrationWarning>
         {children}
         <Analytics />
       </body>

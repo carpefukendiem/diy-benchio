@@ -710,7 +710,15 @@ async function processStatementBuffer(params: {
   }
 
   const categorized = categorizeByRules(parsed.transactions, KEYWORD_MAPPING_RULES)
-  const transactions = toUIFormat(categorized).map((t, i) => ({
+  // Defensive: rules engine shape can drift; fallback to uncategorized transactions.
+  const safeCategorized = Array.isArray(categorized)
+    ? categorized
+    : parsed.transactions.map(t => ({
+        ...t,
+        category_id: null,
+      }))
+
+  const transactions = toUIFormat(safeCategorized).map((t, i) => ({
     ...t,
     id: `${accountName}-${Date.now()}-${i}`,
     account: accountName,
