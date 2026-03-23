@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -28,9 +28,20 @@ interface InteractiveTransactionsListProps {
   transactions: Transaction[]
   onUpdateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
   onBulkUpdate: (updates: Array<{ id: string; updates: Partial<Transaction> }>) => Promise<void>
+  onAddTransaction: (transaction: Omit<Transaction, "id">) => Promise<void>
   onRefresh: () => void
   isLoading: boolean
   highlightedTransactionIds?: string[]
+}
+
+type SavedAuditView = {
+  id: string
+  name: string
+  searchTerm: string
+  categoryFilter: string
+  accountFilter: string
+  sortBy: "category" | "date_desc" | "date_asc" | "amount_desc" | "amount_asc" | "description"
+  showChangedOnly: boolean
 }
 
 export const CATEGORIES = [
@@ -127,6 +138,7 @@ export function InteractiveTransactionsList({
   transactions,
   onUpdateTransaction,
   onBulkUpdate,
+  onAddTransaction,
   onRefresh,
   isLoading,
   highlightedTransactionIds = [],
@@ -134,15 +146,46 @@ export function InteractiveTransactionsList({
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [accountFilter, setAccountFilter] = useState("all")
+  const [sortBy, setSortBy] = useState<"category" | "date_desc" | "date_asc" | "amount_desc" | "amount_asc" | "description">("category")
+  const [showChangedOnly, setShowChangedOnly] = useState(false)
+  const [savedViews, setSavedViews] = useState<SavedAuditView[]>([])
+  const [newViewName, setNewViewName] = useState("")
+  const [recurringCategory, setRecurringCategory] = useState("Phone & Internet Expense")
   const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set())
   const [editingTransaction, setEditingTransaction] = useState<string | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
+  const [showManualForm, setShowManualForm] = useState(false)
+  const [manualDate, setManualDate] = useState(new Date().toISOString().split("T")[0])
+  const [manualDescription, setManualDescription] = useState("")
+  const [manualAmount, setManualAmount] = useState("")
+  const [manualCategory, setManualCategory] = useState("Phone & Internet Expense")
+  const [manualIsIncome, setManualIsIncome] = useState(false)
   const { toast } = useToast()
 
   const highlightedSet = useMemo(() => new Set(highlightedTransactionIds), [highlightedTransactionIds])
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("transactions.savedAuditViews")
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) setSavedViews(parsed)
+    } catch {
+      // ignore localStorage parse errors
+    }
+  }, [])
+
+  const persistViews = (views: SavedAuditView[]) => {
+    setSavedViews(views)
+    try {
+      localStorage.setItem("transactions.savedAuditViews", JSON.stringify(views))
+    } catch {
+      // ignore localStorage write errors
+    }
+  }
+
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((transaction) => {
+    const filtered = transactions.filter((transaction) => {
       const sl = searchTerm.toLowerCase()
       const matchesSearch = !searchTerm ||
         transaction.description.toLowerCase().includes(sl) ||
@@ -152,11 +195,168 @@ export function InteractiveTransactionsList({
       const matchesCategory = categoryFilter === "all" || 
         (categoryFilter === "uncategorized" ? (!transaction.category || transaction.category === "Uncategorized Expense") : transaction.category === categoryFilter)
       const matchesAccount = accountFilter === "all" || transaction.account === accountFilter
-      return matchesSearch && matchesCategory && matchesAccount
+      const matchesChangedOnly = !showChangedOnly || highlightedSet.has(transaction.id)
+      return matchesSearch && matchesCategory && matchesAccount && matchesChangedOnly
     })
-  }, [transactions, searchTerm, categoryFilter, accountFilter])
+
+    // Keep ordering deterministic so category edits re-position rows immediately.
+    return filtered.slice().sort((a, b) => {
+      const dateA = Date.parse(a.date || "")
+      const dateB = Date.parse(b.date || "")
+      const catA = (a.category || "").toLowerCase()
+      const catB = (b.category || "").toLowerCase()
+
+      if (sortBy === "category" && catA !== catB) return catA.localeCompare(catB)
+      if (sortBy === "date_desc" && Number.isFinite(dateA) && Number.isFinite(dateB) && dateA !== dateB) return dateB - dateA
+      if (sortBy === "date_asc" && Number.isFinite(dateA) && Number.isFinite(dateB) && dateA !== dateB) return dateA - dateB
+      if (sortBy === "amount_desc" && a.amount !== b.amount) return b.amount - a.amount
+      if (sortBy === "amount_asc" && a.amount !== b.amount) return a.amount - b.amount
+      if (sortBy === "description") return (a.description || "").localeCompare(b.description || "")
+
+      // Stable fallback order
+      if (catA !== catB) return catA.localeCompare(catB)
+      if (Number.isFinite(dateA) && Number.isFinite(dateB) && dateA !== dateB) return dateB - dateA
+      if (a.amount !== b.amount) return b.amount - a.amount
+      return (a.description || "").localeCompare(b.description || "")
+    })
+  }, [transactions, searchTerm, categoryFilter, accountFilter, sortBy, showChangedOnly, highlightedSet])
 
   const accounts = Array.from(new Set(transactions.map((t) => t.account)))
+  const defaultAccount = accounts[0] || "Business Checking"
+  const [manualAccount, setManualAccount] = useState(defaultAccount)
+
+  const auditYear = useMemo(() => {
+    const years = transactions
+      .map((t) => Number((t.date || "").slice(0, 4)))
+      .filter((y) => Number.isFinite(y) && y > 2000)
+    if (years.length === 0) return new Date().getFullYear()
+    return years.sort((a, b) => b - a)[0]
+  }, [transactions])
+
+  const phoneTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const isYear = (t.date || "").startsWith(String(auditYear))
+      if (!isYear) return false
+      const dl = (t.description || "").toLowerCase()
+      return t.category === "Phone & Internet Expense" || dl.includes("cox") || dl.includes("verizon")
+    })
+  }, [transactions, auditYear])
+
+  const missingPhoneMonths = useMemo(() => {
+    const present = new Set(
+      phoneTransactions
+        .map((t) => Number((t.date || "").slice(5, 7)))
+        .filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
+    )
+    const missing: number[] = []
+    for (let m = 1; m <= 12; m++) if (!present.has(m)) missing.push(m)
+    return missing
+  }, [phoneTransactions])
+
+  const krakenTransactions = useMemo(() => {
+    return transactions.filter((t) => (t.description || "").toLowerCase().includes("kraken"))
+  }, [transactions])
+
+  const duplicateGroups = useMemo(() => {
+    const groups = new Map<string, Transaction[]>()
+    for (const t of transactions) {
+      const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
+      const key = `${t.date}|${Number(t.amount).toFixed(2)}|${merchantish}`
+      const arr = groups.get(key) || []
+      arr.push(t)
+      groups.set(key, arr)
+    }
+    return Array.from(groups.values())
+      .filter((g) => g.length > 1)
+      .sort((a, b) => b.length - a.length)
+  }, [transactions])
+
+  const recurringCoverage = useMemo(() => {
+    const tx = transactions.filter((t) => {
+      const isYear = (t.date || "").startsWith(String(auditYear))
+      return isYear && (t.category || "") === recurringCategory
+    })
+    const present = new Set(
+      tx.map((t) => Number((t.date || "").slice(5, 7))).filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
+    )
+    const missing: number[] = []
+    for (let m = 1; m <= 12; m++) if (!present.has(m)) missing.push(m)
+    return { count: tx.length, coveredMonths: present.size, missingMonths: missing }
+  }, [transactions, auditYear, recurringCategory])
+
+  const handleAddManualTransaction = async () => {
+    const amount = Number(manualAmount)
+    if (!manualDate || !manualDescription.trim() || !Number.isFinite(amount) || amount <= 0) {
+      toast({ title: "Missing fields", description: "Date, description, and amount are required.", variant: "destructive" })
+      return
+    }
+    try {
+      await onAddTransaction({
+        date: manualDate,
+        description: manualDescription.trim(),
+        amount: Math.abs(amount),
+        category: manualCategory,
+        account: manualAccount || defaultAccount,
+        isIncome: manualIsIncome,
+      })
+      toast({ title: "Manual transaction added", description: "You can now edit category/account as needed." })
+      setManualDescription("")
+      setManualAmount("")
+      setShowManualForm(false)
+    } catch {
+      toast({ title: "Error", description: "Failed to add manual transaction", variant: "destructive" })
+    }
+  }
+
+  const handleMarkKrakenPersonal = async () => {
+    if (krakenTransactions.length === 0) return
+    const updates = krakenTransactions.map((t) => ({
+      id: t.id,
+      updates: { category: "Crypto / Investments", isIncome: false },
+    }))
+    await onBulkUpdate(updates)
+    toast({
+      title: "Kraken transactions updated",
+      description: `${updates.length} transaction${updates.length === 1 ? "" : "s"} marked as personal/excluded.`,
+    })
+  }
+
+  const resetFilters = () => {
+    setSearchTerm("")
+    setCategoryFilter("all")
+    setAccountFilter("all")
+    setSortBy("category")
+    setShowChangedOnly(false)
+  }
+
+  const saveCurrentView = () => {
+    const name = newViewName.trim()
+    if (!name) return
+    const view: SavedAuditView = {
+      id: `${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      name,
+      searchTerm,
+      categoryFilter,
+      accountFilter,
+      sortBy,
+      showChangedOnly,
+    }
+    persistViews([view, ...savedViews].slice(0, 12))
+    setNewViewName("")
+    toast({ title: "Audit view saved", description: `"${name}" added.` })
+  }
+
+  const applySavedView = (view: SavedAuditView) => {
+    setSearchTerm(view.searchTerm)
+    setCategoryFilter(view.categoryFilter)
+    setAccountFilter(view.accountFilter)
+    setSortBy(view.sortBy)
+    setShowChangedOnly(view.showChangedOnly)
+  }
+
+  const deleteSavedView = (id: string) => {
+    persistViews(savedViews.filter((v) => v.id !== id))
+  }
 
   const handleTransactionUpdate = async (transactionId: string, field: keyof Transaction, value: any) => {
     try {
@@ -393,6 +593,112 @@ export function InteractiveTransactionsList({
       <CardContent>
         {/* Filters and Bulk Actions */}
         <div className="space-y-4 mb-6">
+          <div className="rounded-lg border border-amber-300 bg-amber-50/70 dark:bg-amber-950/20 dark:border-amber-700 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm">
+                <p className="font-medium">Audit & Quick Fix</p>
+                <p className="text-muted-foreground">
+                  Phone/Internet in {auditYear}: {phoneTransactions.length} txn across {12 - missingPhoneMonths.length}/12 months
+                  {missingPhoneMonths.length > 0 ? ` (missing ${missingPhoneMonths.length})` : ""}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setShowManualForm((v) => !v)}>
+                {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
+              </Button>
+            </div>
+            {krakenTransactions.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">{krakenTransactions.length} Kraken txn detected</Badge>
+                <Button size="sm" variant="secondary" onClick={handleMarkKrakenPersonal}>
+                  Mark Kraken as Personal/Excluded
+                </Button>
+              </div>
+            )}
+            {missingPhoneMonths.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Missing months (phone/internet): {missingPhoneMonths.map((m) => String(m).padStart(2, "0")).join(", ")}
+              </p>
+            )}
+
+            <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
+              <p className="text-xs font-medium mb-1">Monthly completeness checker</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={recurringCategory} onValueChange={setRecurringCategory}>
+                  <SelectTrigger className="w-[250px] h-8">
+                    <SelectValue placeholder="Pick category to audit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CATEGORIES.map((category) => (
+                      <SelectItem key={category} value={category}>
+                        {category}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Badge variant="outline">{recurringCoverage.coveredMonths}/12 months covered</Badge>
+                {recurringCoverage.missingMonths.length > 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    Missing: {recurringCoverage.missingMonths.map((m) => String(m).padStart(2, "0")).join(", ")}
+                  </span>
+                ) : (
+                  <span className="text-xs text-green-700 dark:text-green-300">No missing months</span>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-1 border-t border-amber-200/80 dark:border-amber-800/60">
+              <p className="text-xs font-medium mb-1">Duplicate detector</p>
+              {duplicateGroups.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No obvious duplicates by date + amount + merchant/description.</p>
+              ) : (
+                <div className="space-y-1">
+                  {duplicateGroups.slice(0, 5).map((group, idx) => (
+                    <p key={idx} className="text-xs text-muted-foreground">
+                      {group.length}x — {group[0].date} — ${group[0].amount.toFixed(2)} — {(group[0].merchantName || group[0].description).slice(0, 80)}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {showManualForm && (
+            <div className="rounded-lg border p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
+              <Input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} />
+              <Input
+                placeholder="Description (e.g. Verizon Wireless)"
+                value={manualDescription}
+                onChange={(e) => setManualDescription(e.target.value)}
+                className="md:col-span-2"
+              />
+              <Input type="number" step="0.01" placeholder="Amount" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} />
+              <Select value={manualCategory} onValueChange={(v) => { setManualCategory(v); setManualIsIncome(["Sales Revenue","Service Income","Freelance Income","Interest Income","Other Income","Refunds Given","Member Contribution - Ruben Ruiz"].includes(v)) }}>
+                <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((category) => (
+                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={manualAccount || defaultAccount} onValueChange={setManualAccount}>
+                <SelectTrigger><SelectValue placeholder="Account" /></SelectTrigger>
+                <SelectContent>
+                  {accounts.length === 0 ? (
+                    <SelectItem value={defaultAccount}>{defaultAccount}</SelectItem>
+                  ) : (
+                    accounts.map((account) => (
+                      <SelectItem key={account} value={account}>{account}</SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              <div className="md:col-span-6 flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setShowManualForm(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleAddManualTransaction}>Save Manual Transaction</Button>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-4">
             <div className="flex-1">
               <div className="relative">
@@ -432,7 +738,56 @@ export function InteractiveTransactionsList({
                 ))}
               </SelectContent>
             </Select>
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+              <SelectTrigger className="w-[210px]">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="category">Sort: Category (A-Z)</SelectItem>
+                <SelectItem value="date_desc">Sort: Date (Newest)</SelectItem>
+                <SelectItem value="date_asc">Sort: Date (Oldest)</SelectItem>
+                <SelectItem value="amount_desc">Sort: Amount (High-Low)</SelectItem>
+                <SelectItem value="amount_asc">Sort: Amount (Low-High)</SelectItem>
+                <SelectItem value="description">Sort: Description (A-Z)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant={showChangedOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowChangedOnly((v) => !v)}
+              disabled={highlightedTransactionIds.length === 0}
+              title="Show only recently changed rows (e.g. after Force All)"
+            >
+              Only Changed
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              Reset
+            </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={newViewName}
+              onChange={(e) => setNewViewName(e.target.value)}
+              placeholder="Save current filters as..."
+              className="w-[220px] h-8"
+            />
+            <Button size="sm" variant="outline" onClick={saveCurrentView} disabled={!newViewName.trim()}>
+              Save View
+            </Button>
+            {savedViews.map((view) => (
+              <div key={view.id} className="inline-flex items-center gap-1 rounded border px-2 py-1">
+                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => applySavedView(view)}>
+                  {view.name}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => deleteSavedView(view.id)}>
+                  x
+                </Button>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Showing {filteredTransactions.length} of {transactions.length} transactions
+          </p>
 
           {/* Bulk Actions */}
           {selectedTransactions.size > 0 && (

@@ -58,6 +58,7 @@ interface Transaction {
   merchantName?: string
   pending?: boolean
 }
+type NewTransactionInput = Omit<Transaction, "id">
 
 interface UploadedStatement {
   id: string
@@ -259,6 +260,17 @@ export default function CaliforniaBusinessAccounting() {
           }),
         }
       })
+    )
+  }, [currentBusinessId])
+
+  const addManualTransaction = useCallback(async (txn: NewTransactionInput) => {
+    const manualId = `manual-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+    setBusinesses((prev) =>
+      prev.map((b) =>
+        b.id === currentBusinessId
+          ? { ...b, transactions: [{ ...txn, id: manualId }, ...b.transactions] }
+          : b
+      )
     )
   }, [currentBusinessId])
 
@@ -866,6 +878,7 @@ export default function CaliforniaBusinessAccounting() {
                     transactions={currentBusiness.transactions}
                     onUpdateTransaction={updateTransaction}
                     onBulkUpdate={bulkUpdateTransactions}
+                    onAddTransaction={addManualTransaction}
                     onRefresh={() => {}}
                     isLoading={isLoading}
                     highlightedTransactionIds={highlightedTransactionIds}
