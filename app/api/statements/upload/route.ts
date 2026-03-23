@@ -156,7 +156,7 @@ function parseWFPDFText(text: string) {
     } else if (current) {
       // Continuation line
       const trimmed = line.trim()
-      if (!trimmed) return
+      if (!trimmed) continue
       const amtMatches = trimmed.match(/^[\d,]+\.\d{2}(\s+[\d,]+\.\d{2})*$/)
       if (amtMatches) {
         // Pure amount line
@@ -387,24 +387,47 @@ function parsePDFText(text: string) {
   const stmtType = detectStatementType(text)
   console.log(`[pdf] Auto-detected statement type: ${stmtType}, text length: ${text.length}`)
 
-  let parsed
-  if (stmtType === "chase") {
-    parsed = parseChasePDFText(text)
-  } else if (stmtType === "barclays") {
-    parsed = parseBarclaysPDFText(text)
-  } else {
-    // Default: Wells Fargo
-    parsed = parseWFPDFText(text)
+  const safeEmpty = { transactions: [] as any[], statementMonth: "Unknown", statementYear: String(new Date().getFullYear()) }
+
+  let parsed = safeEmpty
+  try {
+    if (stmtType === "chase") {
+      parsed = parseChasePDFText(text)
+    } else if (stmtType === "barclays") {
+      parsed = parseBarclaysPDFText(text)
+    } else {
+      // Default: Wells Fargo
+      parsed = parseWFPDFText(text)
+    }
+  } catch (e: any) {
+    console.error("[pdf] Primary parser crashed:", e?.message || e)
+    parsed = safeEmpty
+  }
+
+  if (!parsed || !Array.isArray(parsed.transactions)) {
+    console.warn("[pdf] Primary parser returned invalid shape; using safe empty result")
+    parsed = safeEmpty
   }
 
   // If primary parser found nothing, try all parsers as fallback
   if (parsed.transactions.length === 0) {
     console.log("[pdf] Primary parser found 0 txns, trying all parsers as fallback")
-    const wf = parseWFPDFText(text)
-    const chase = parseChasePDFText(text)
-    const barclays = parseBarclaysPDFText(text)
+    const runSafe = (fn: (x: string) => any, label: string) => {
+      try {
+        const out = fn(text)
+        if (!out || !Array.isArray(out.transactions)) return safeEmpty
+        return out
+      } catch (e: any) {
+        console.error(`[pdf] Fallback parser ${label} crashed:`, e?.message || e)
+        return safeEmpty
+      }
+    }
 
-    const best = [wf, chase, barclays].sort((a, b) => b.transactions.length - a.transactions.length)[0]
+    const wf = runSafe(parseWFPDFText, "wellsfargo")
+    const chase = runSafe(parseChasePDFText, "chase")
+    const barclays = runSafe(parseBarclaysPDFText, "barclays")
+
+    const best = [wf, chase, barclays].sort((a, b) => b.transactions.length - a.transactions.length)[0] || safeEmpty
     if (best.transactions.length > 0) {
       console.log(`[pdf] Fallback found ${best.transactions.length} txns`)
       parsed = best
