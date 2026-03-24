@@ -43,7 +43,8 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
   "00000000-0000-0000-0004-000000000006": { name: "Personal - Health", isPersonal: true, isTransfer: false },
   "00000000-0000-0000-0004-000000000007": { name: "Owner Draw", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0004-000000000008": { name: "Zelle / Venmo Transfer", isPersonal: false, isTransfer: true },
-  "00000000-0000-0000-0004-000000000009": { name: "Crypto / Investments", isPersonal: true, isTransfer: false },
+  "00000000-0000-0000-0004-000000000009": { name: "Crypto / Investments", isPersonal: true, isTransfer: true },
+  "00000000-0000-0000-0004-000000000010": { name: "Personal - Investments", isPersonal: true, isTransfer: true },
   "00000000-0000-0000-0002-000000000030": { name: "Soccer Team Sponsorship", isPersonal: false, isTransfer: false },
   "00000000-0000-0000-0002-000000000031": { name: "Office Kitchen Supplies", isPersonal: false, isTransfer: false },
   "00000000-0000-0000-0002-000000000032": { name: "Parking Expense", isPersonal: false, isTransfer: false },
@@ -708,8 +709,15 @@ function toUIFormat(categorized: any[] | undefined | null) {
       .replace(/Purchase with Cash Back \$?\s*authorized on \d{2}\/\d{2}\s*/i,"")
       .split(/\s{2,}/)[0].substring(0,50).trim()
     return {
-      date: tx.date, description: tx.description, amount: Math.abs(tx.amount),
-      category: categoryName, isIncome: tx.type === "credit", merchantName, pending: false,
+      date: tx.date,
+      description: tx.description,
+      amount: Math.abs(tx.amount),
+      category: categoryName,
+      isIncome: tx.type === "credit",
+      merchantName,
+      pending: false,
+      is_personal: Boolean(tx.is_personal),
+      is_transfer: Boolean(tx.is_transfer),
     }
   })
 }

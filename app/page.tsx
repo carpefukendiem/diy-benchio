@@ -57,6 +57,9 @@ interface Transaction {
   isIncome: boolean
   merchantName?: string
   pending?: boolean
+  /** From categorization rules — used for Schedule C export exclusion */
+  is_personal?: boolean
+  is_transfer?: boolean
 }
 type NewTransactionInput = Omit<Transaction, "id">
 

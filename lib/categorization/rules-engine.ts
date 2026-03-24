@@ -89,6 +89,7 @@ export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boole
   "00000000-0000-0000-0004-000000000007": { name: "Owner Draw", isIncome: false },
   "00000000-0000-0000-0004-000000000008": { name: "Zelle / Venmo Transfer", isIncome: false },
   "00000000-0000-0000-0004-000000000009": { name: "Crypto / Investments", isIncome: false },
+  "00000000-0000-0000-0004-000000000010": { name: "Personal - Investments", isIncome: false },
 };
 
 // Built-in rules for Ranking SB business account
@@ -899,6 +900,14 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   is_transfer: boolean;
   amountMax?: number;
 }> = [
+  // --- Income (Schedule C Line 1) ---
+  { pattern: 'stripe transfer', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
+  { pattern: 'stripe payout', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
+  { pattern: 'upwork escrow', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  // --- Transfers / excluded from Schedule C ---
+  { pattern: 'save as you go', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
+  { pattern: 'recurring transfer to ruiz r way2save', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
+  { pattern: 'atm cash deposit', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
   { pattern: 'overdraft fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
   { pattern: 'monthly service fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
   { pattern: 'overdraft protection from', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
@@ -914,15 +923,75 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'messaging credits', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // Home Depot ONLINE PMT = credit card payment, not home improvement
   { pattern: 'home depot online pmt', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
-  // Upwork Escrow via Chase — "TRANSFER Payment Escr Money Transf CA CARD7254"
+  // Upwork Escrow via Chase
   { pattern: 'money transf', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   { pattern: 'payment escr', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
-  // TradingView is software, not crypto
+  // --- Prime Video (personal) BEFORE Amazon Prime membership (business software) ---
+  { pattern: 'prime video channe', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'prime video channels', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'amazon prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'amazon prime', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  // --- Crypto / investments (excluded from Schedule C) ---
+  { pattern: 'instant pmt from coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
+  { pattern: 'kraken', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
+  { pattern: 'coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
+  // --- Disney / DLR — all personal entertainment ---
+  { pattern: 'dlr wdtc', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr coffee', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr pym', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr off the page', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr studio store', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr seaside souven', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr rocket fizz', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr ', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'dlr', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  // --- PayPal personal purchases (before generic PayPal) ---
+  { pattern: 'paypal *thrivecaus', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'paypal inst xfer honeylove', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'paypal inst xfer*honeylove', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  { pattern: 'paypal *acquisitio', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
+  // --- Restaurants & meals ---
+  { pattern: 'benchmark eate', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'benchmark eater', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'tst*benchmark', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'cheesecake', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'panda express', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'jersey mikes', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: "jersey mike's", category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'jersey mike', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'taqueria lillys', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'taqueria lilly', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'habit la cumbre', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'habit buellton', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'pressed juicery', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  { pattern: 'pressed - paseo', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
+  // --- Software & utilities ---
   { pattern: 'tradingview', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'tradingviewv', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  // Prime Video = personal entertainment
-  { pattern: 'prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'amazon prime', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'screaming frog', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'ring basic plan', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false },
+  { pattern: 'ring.com', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false },
+  // --- Personal shopping / entertainment ---
+  { pattern: 'jewelry couture', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'nikepos', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'tillys', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'billabong', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'fairview twin', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  { pattern: 'camino real cinema', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  // --- Gas & auto ---
+  { pattern: 'storke fuel', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
+  { pattern: 'la cumbre fuel', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
+  { pattern: '7-eleven', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
+  { pattern: 'clean wave car', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
+  // --- Home office / supplies / postage ---
+  { pattern: 'the home depot', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, amountMax: 600 },
+  { pattern: 'home depot', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, amountMax: 600 },
+  { pattern: "miner's ace", category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'miners ace', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
+  { pattern: 'the ups store', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false },
+  { pattern: 'ups store', category_id: '00000000-0000-0000-0002-000000000044', is_personal: false, is_transfer: false },
+  { pattern: 'schwab brokerage', category_id: '00000000-0000-0000-0004-000000000010', is_personal: true, is_transfer: true },
 
   // ============================
   // DIGITAL MARKETING AGENCY — high-priority business expense rules
@@ -951,17 +1020,9 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'trader joe', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
   { pattern: 'ralphs', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
   { pattern: 'pet house', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'tillys', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'tilly', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'nikepos', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'nike', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'jewelry couture', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'billabong', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'screaming frog', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'codecademy', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false },
   { pattern: 'lemos feed', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'lemos pet', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'schwab brokerage', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
 ];
 
 export function categorizeByRules(

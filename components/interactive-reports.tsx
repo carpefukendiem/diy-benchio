@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { FileSpreadsheet, FileText, TrendingUp, TrendingDown, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { formatScheduleCLine, getDeductibleAmountForExpense, getScheduleCLineForCategory } from "@/lib/tax/treatment"
+import { isExcludedFromScheduleCExport } from "@/lib/tax/scheduleCExportFilter"
 
 interface Transaction {
   id: string
@@ -18,6 +19,8 @@ interface Transaction {
   account: string
   isIncome: boolean
   merchantName?: string
+  is_personal?: boolean
+  is_transfer?: boolean
 }
 
 interface InteractiveReportsProps {
@@ -225,6 +228,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
   const exportCSV = useCallback(() => {
     const rows = [["Date", "Description", "Amount", "Category", "Type", "Account", "Schedule C Line"]]
     transactions.forEach(t => {
+      if (isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal })) return
       const scheduleLine = formatScheduleCLine(t.category)
       rows.push([
         t.date, `"${t.description}"`, t.amount.toFixed(2), t.category,
@@ -285,6 +289,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
       ["Date", "Description", "Amount", "Category", "Schedule C Line", "Type", "Account"],
     ]
     transactions
+      .filter((t) => !isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal }))
       .sort((a, b) => a.date.localeCompare(b.date))
       .forEach(t => {
         const sc = getScheduleCLineForCategory(t.category)
