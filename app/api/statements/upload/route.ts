@@ -198,9 +198,23 @@ function parseWFPDFText(text: string) {
 function parseChasePDFText(text: string) {
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
-  // Chase statements don't have a clear year in header; derive from transaction dates
-  // Most statements span Dec-Jan or are within one year; default to current year
-  let year = new Date().getFullYear()
+  let year = new Date().getFullYear() - 1
+  // Chase 2025 statements show due dates in
+  // 2025/2026 but transactions are in 2025.
+  // Derive from Payment Due Date:
+  const chaseDueDateMatch = text.match(
+    /Payment Due Date[:\s]*(\d{2})\/(\d{2})\/(\d{2,4})/
+  )
+  if (chaseDueDateMatch) {
+    let dueYr = parseInt(chaseDueDateMatch[3])
+    if (dueYr < 100) dueYr += 2000
+    const dueMo = parseInt(chaseDueDateMatch[1])
+    // Due date is ~3 weeks after statement closes
+    // Feb due date = January statement = dueYr
+    // Jan due date = December statement = dueYr - 1
+    // All other months: statement year = dueYr
+    year = dueMo === 1 ? dueYr - 1 : dueYr
+  }
   let stmtMonth = "Unknown"
 
   const txns: any[] = []
