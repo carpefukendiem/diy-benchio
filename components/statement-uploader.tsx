@@ -357,10 +357,26 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     return txns.map((t) => {
       const type = accountTypeByAccount[t.account] || "bank"
       if (type === "personal") {
-        return { ...t, category: "Personal Expense", isIncome: false, isPersonal: true }
+        return {
+          ...t,
+          category: "Personal Expense",
+          isIncome: false,
+          is_personal: true,
+          is_transfer: false,
+          categorized_by: "import",
+          confidence: 1,
+        }
       }
       if (type === "investment") {
-        return { ...t, category: "Crypto / Investments", isIncome: false, isPersonal: true }
+        return {
+          ...t,
+          category: "Crypto / Investments",
+          isIncome: false,
+          is_personal: true,
+          is_transfer: false,
+          categorized_by: "import",
+          confidence: 1,
+        }
       }
       return t
     })

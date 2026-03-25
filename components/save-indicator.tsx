@@ -9,6 +9,7 @@ type SaveStatus = "idle" | "saving" | "saved" | "error" | "unsaved"
 interface SaveIndicatorProps {
   businesses: any[]
   onLoad?: (data: any) => void
+  onAfterSave?: () => void
 }
 
 // Get Supabase config — tries env vars first, falls back to hardcoded
@@ -46,7 +47,7 @@ async function supabaseFetch(path: string, options: RequestInit = {}) {
   } catch { return null }
 }
 
-export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
+export function SaveIndicator({ businesses, onLoad, onAfterSave }: SaveIndicatorProps) {
   const [status, setStatus] = useState<SaveStatus>("idle")
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [supabaseAvailable, setSupabaseAvailable] = useState(false)
@@ -99,6 +100,10 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
     // Always save localStorage
     try { localStorage.setItem("businesses", JSON.stringify(businesses)) } catch {}
 
+    const finish = () => {
+      try { onAfterSave?.() } catch {}
+    }
+
     // Try Supabase
     try {
       const payload = {
@@ -124,6 +129,7 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
             setSupabaseAvailable(true)
             setStatus("saved")
             setLastSaved(new Date().toISOString())
+            finish()
             setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
             return
           }
@@ -131,6 +137,7 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
           setSupabaseAvailable(true)
           setStatus("saved")
           setLastSaved(new Date().toISOString())
+          finish()
           setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
           return
         }
@@ -141,6 +148,7 @@ export function SaveIndicator({ businesses, onLoad }: SaveIndicatorProps) {
     setSupabaseAvailable(false)
     setStatus("saved")
     setLastSaved(new Date().toISOString())
+    finish()
     setTimeout(() => setStatus(prev => prev === "saved" ? "idle" : prev), 3000)
   }, [businesses])
 

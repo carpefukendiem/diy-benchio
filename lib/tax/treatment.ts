@@ -5,6 +5,8 @@ export type UiTransactionLike = {
   isIncome: boolean
   amount: number
   description?: string
+  is_personal?: boolean
+  is_transfer?: boolean
 }
 
 export function getScheduleCLineForCategory(category: string) {
@@ -58,6 +60,11 @@ export function computeUiExpenseTotals(transactions: UiTransactionLike[]) {
     const cl = (t.category || "").toLowerCase()
     if (!cl || cl.includes("uncategorized")) continue
 
+    // Prefer structured flags when available.
+    if (t.is_personal === true) continue
+    if (t.is_transfer === true) continue
+
+    // Back-compat: fall back to category-name keywords.
     if (personalKeywords.some((k) => cl.includes(k))) continue
     if (transferKeywords.some((k) => cl.includes(k))) continue
     if (capitalKeywords.some((k) => cl.includes(k))) continue

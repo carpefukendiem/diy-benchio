@@ -718,6 +718,9 @@ function toUIFormat(categorized: any[] | undefined | null) {
       pending: false,
       is_personal: Boolean(tx.is_personal),
       is_transfer: Boolean(tx.is_transfer),
+      confidence: typeof tx.confidence === "number" ? tx.confidence : undefined,
+      categorized_by: tx.categorized_by ?? undefined,
+      notes: tx.notes ?? undefined,
     }
   })
 }

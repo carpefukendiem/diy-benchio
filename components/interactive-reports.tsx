@@ -1,14 +1,18 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FileSpreadsheet, FileText, TrendingUp, TrendingDown, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { formatScheduleCLine, getDeductibleAmountForExpense, getScheduleCLineForCategory } from "@/lib/tax/treatment"
 import { isExcludedFromScheduleCExport } from "@/lib/tax/scheduleCExportFilter"
+import { EditableCell } from "@/components/editable-cell"
+import { CATEGORIES as TRANSACTION_CATEGORIES } from "@/components/interactive-transactions-list"
 
 interface Transaction {
   id: string
@@ -21,13 +25,17 @@ interface Transaction {
   merchantName?: string
   is_personal?: boolean
   is_transfer?: boolean
+  categorized_by?: "rule" | "ai" | "user" | null
+  confidence?: number
 }
 
 interface InteractiveReportsProps {
   transactions: Transaction[]
   onUpdateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
+  onBulkUpdate: (updates: Array<{ id: string; updates: Partial<Transaction> }>) => Promise<void>
   dateRange: { start: string; end: string }
   businessName?: string
+  highlightedTransactionIds?: string[]
 }
 
 // Schedule C line mapping — IRS accurate, aligned with bench.io categories
@@ -107,9 +115,25 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "Retail Product Sales COGS": { line: "4", label: "Cost of goods sold (retail products for resale)" },
 }
 
-export function InteractiveReports({ transactions, onUpdateTransaction, dateRange, businessName = "My Business" }: InteractiveReportsProps) {
+export function InteractiveReports({
+  transactions,
+  onUpdateTransaction,
+  onBulkUpdate,
+  dateRange,
+  businessName = "My Business",
+  highlightedTransactionIds,
+}: InteractiveReportsProps) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const { toast } = useToast()
+
+  const [activeReportTab, setActiveReportTab] = useState<string>("income-statement")
+  const highlightedSet = useMemo(() => new Set(highlightedTransactionIds ?? []), [highlightedTransactionIds])
+  const accounts = useMemo(() => Array.from(new Set(transactions.map(t => t.account))).sort((a, b) => a.localeCompare(b)), [transactions])
+  const [bulkReclassifyCategory, setBulkReclassifyCategory] = useState<string>("")
+
+  useEffect(() => {
+    setBulkReclassifyCategory(expandedCategory || "")
+  }, [expandedCategory])
 
   // Build category totals with transactions grouped
   const categoryTotals = useMemo(() => {
@@ -122,7 +146,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
       if (t.isIncome) totals[cat].isIncome = true
     })
     return totals
-  }, [transactions])
+  }, [transactions, activeReportTab])
 
   // Separate into bench.io-style sections: Revenue, COGS, Operating Expenses, Above-the-line, Personal, Transfers, Capital
   const { revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, capitalItems } = useMemo(() => {
@@ -148,13 +172,15 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
 
     Object.entries(categoryTotals).forEach(([cat, data]) => {
       const cl = cat.toLowerCase()
+      const isTransferAny = data.transactions.some(t => t.is_transfer === true)
+      const isPersonalAny = data.transactions.some(t => t.is_personal === true)
       if (cl.includes("uncategorized") || cl.includes("awaiting category")) { uncategorized.push([cat, data]); return }
       if (nondeductibleKeywords.some(k => cl.includes(k))) { nondeductible.push([cat, data]); return }
       if (returnsKeywords.some(k => cl.includes(k))) { returns.push([cat, data]); return }
       if (capitalKeywords.some(k => cl.includes(k))) { capital.push([cat, data]); return }
       if (data.isIncome || cl.includes("revenue") || cl.includes("income")) { revenue.push([cat, data]); return }
-      if (transferKeywords.some(k => cl.includes(k))) { transfer.push([cat, data]); return }
-      if (personalKeywords.some(k => cl.includes(k))) { personal.push([cat, data]); return }
+      if (isTransferAny || transferKeywords.some(k => cl.includes(k))) { transfer.push([cat, data]); return }
+      if (isPersonalAny || personalKeywords.some(k => cl.includes(k))) { personal.push([cat, data]); return }
       if (cogsKeywords.some(k => cl.includes(k))) { cogs.push([cat, data]); return }
       if (aboveLineKeywords.some(k => cl.includes(k))) { aboveLine.push([cat, data]); return }
       expense.push([cat, data])
@@ -194,6 +220,7 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
 
   // Monthly trends data
   const monthlyData = useMemo(() => {
+    if (activeReportTab !== "monthly-trends") return []
     const months: Record<string, { revenue: number; expenses: number; net: number }> = {}
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     // Init all 12 months
@@ -206,8 +233,8 @@ export function InteractiveReports({ transactions, onUpdateTransaction, dateRang
       const mn = monthNames[d.getMonth()]
       if (!mn) return
       const cl = t.category?.toLowerCase() || ""
-      const isTransfer = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "owner draw", "brokerage transfer", "business treasury"].some(k => cl.includes(k))
-      const isPersonal = ["personal", "crypto"].some(k => cl.includes(k))
+      const isTransfer = t.is_transfer === true || ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "owner draw", "brokerage transfer", "business treasury"].some(k => cl.includes(k))
+      const isPersonal = t.is_personal === true || ["personal", "crypto"].some(k => cl.includes(k))
 
       if (isTransfer || isPersonal) return
       if (t.isIncome) months[mn].revenue += t.amount
@@ -458,16 +485,48 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
     toast({ title: "Income Statement Downloaded", description: "Open the HTML file, then use File -> Print -> Save as PDF for a clean PDF." })
   }, [revenueItems, returnsItems, cogsItems, expenseItems, aboveTheLineItems, personalItems, transferItems, uncategorizedItems, nondeductibleItems, capitalItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, netIncome, dateRange, businessName, toast])
 
+  const inferFromCategory = useCallback((category: string) => {
+    const revenueCategories = [
+      "Sales Revenue",
+      "Service Income",
+      "Freelance Income",
+      "Interest Income",
+      "Other Income",
+      "Refunds Given",
+      "Member Contribution - Ruben Ruiz",
+    ]
+    const isIncome = revenueCategories.includes(category)
+    const c = String(category || "").toLowerCase()
+    const is_personal = c.includes("personal") || c.includes("crypto / investments")
+    const is_transfer =
+      c.includes("credit card payment") ||
+      c.includes("member drawing") ||
+      c.includes("member contribution") ||
+      c.includes("owner draw") ||
+      c.includes("internal transfer") ||
+      c.includes("zelle / venmo transfer") ||
+      c.includes("brokerage transfer") ||
+      c.includes("business treasury") ||
+      c.includes("crypto / investments")
+    return { isIncome, is_personal, is_transfer }
+  }, [])
+
   // Render a category row with expandable transaction list
   const CategoryRow = ({ cat, data, showLine = true }: { cat: string; data: typeof categoryTotals[string]; showLine?: boolean }) => {
     const sc = SCHEDULE_C_LINES[cat]
     const isExpanded = expandedCategory === cat
     const deductible = sc?.deductPct ? data.amount * (sc.deductPct / 100) : data.amount
+    const normalizedBulkCategory = TRANSACTION_CATEGORIES.includes(bulkReclassifyCategory)
+      ? bulkReclassifyCategory
+      : (TRANSACTION_CATEGORIES[0] ?? "")
+    const hasDirtyInCategory = data.transactions.some((t) => highlightedSet.has(t.id))
 
     return (
       <div key={cat}>
         <div
-          className="flex justify-between items-center py-2 px-3 hover:bg-muted/50 rounded cursor-pointer transition-colors group"
+          className={`flex justify-between items-center py-2 px-3 hover:bg-muted/50 rounded cursor-pointer transition-colors group ${
+            hasDirtyInCategory ? "bg-amber-50 border border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""
+          }`}
           onClick={() => toggleCategory(cat)}
         >
           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -495,25 +554,168 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
         </div>
 
         {isExpanded && (
-          <div className="ml-6 mb-2 border-l-2 border-muted pl-3">
+          <div className="ml-6 mb-2 border-l-2 border-muted pl-3 space-y-2">
+            {data.transactions.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" className="text-[11px]">
+                  Bulk reclassify {data.transactions.length} in "{cat}"
+                </Badge>
+                <Select value={normalizedBulkCategory} onValueChange={setBulkReclassifyCategory}>
+                  <SelectTrigger className="w-[260px] h-8">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TRANSACTION_CATEGORIES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-8"
+                  disabled={!normalizedBulkCategory || normalizedBulkCategory === cat}
+                  onClick={async () => {
+                    const toCategory = normalizedBulkCategory
+                    const { isIncome, is_personal, is_transfer } = inferFromCategory(toCategory)
+                    const updates = data.transactions.map((tx) => ({
+                      id: tx.id,
+                      updates: {
+                        category: toCategory,
+                        isIncome,
+                        is_personal,
+                        is_transfer,
+                        categorized_by: "user",
+                        confidence: 1,
+                      },
+                    }))
+                    await onBulkUpdate(updates)
+                    setExpandedCategory(toCategory)
+                  }}
+                >
+                  Apply to all
+                </Button>
+              </div>
+            )}
+
             <div className="text-xs text-muted-foreground py-1 grid grid-cols-12 font-medium">
               <span className="col-span-2">Date</span>
-              <span className="col-span-6">Description</span>
+              <span className="col-span-4">Description</span>
               <span className="col-span-2 text-right">Amount</span>
+              <span className="col-span-2">Category</span>
               <span className="col-span-2">Account</span>
             </div>
+
             {data.transactions
               .sort((a, b) => a.date.localeCompare(b.date))
-              .map(t => (
-                <div key={t.id} className="text-xs py-1.5 grid grid-cols-12 hover:bg-muted/30 rounded px-1 border-b border-muted/30">
-                  <span className="col-span-2 text-muted-foreground">{t.date}</span>
-                  <span className="col-span-6 truncate" title={t.description}>{t.description}</span>
-                  <span className={`col-span-2 text-right font-mono ${t.isIncome ? "text-green-600" : ""}`}>
-                    ${t.amount.toFixed(2)}
-                  </span>
-                  <span className="col-span-2 text-muted-foreground truncate">{t.account}</span>
-                </div>
-              ))}
+              .map((t) => {
+                const isHighlighted = highlightedSet.has(t.id)
+                const categorizedLabel =
+                  t.categorized_by === "rule"
+                    ? "Rules"
+                    : t.categorized_by === "ai"
+                      ? "AI"
+                      : t.categorized_by === "user"
+                        ? "Manual"
+                        : ""
+                const confidenceLabel = typeof t.confidence === "number" ? `${Math.round(t.confidence * 100)}%` : ""
+                return (
+                  <div
+                    key={t.id}
+                    className={`text-xs py-1.5 grid grid-cols-12 hover:bg-muted/30 rounded px-1 border-b border-muted/30 ${
+                      isHighlighted
+                        ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700"
+                        : ""
+                    }`}
+                  >
+                    <span className="col-span-2 text-muted-foreground truncate">{t.date}</span>
+
+                    <div className="col-span-4 min-w-0">
+                      <div className="truncate" title={t.description}>
+                        {t.description}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {t.categorized_by && (
+                          <Badge variant="outline" className="text-[10px] whitespace-nowrap">
+                            {categorizedLabel}
+                          </Badge>
+                        )}
+                        {confidenceLabel && (
+                          <Badge variant="secondary" className="text-[10px] whitespace-nowrap">
+                            {confidenceLabel}
+                          </Badge>
+                        )}
+
+                        <div className="flex items-center gap-2 ml-auto">
+                          <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer">
+                            <Checkbox
+                              checked={t.is_personal === true}
+                              onCheckedChange={(v) =>
+                                void onUpdateTransaction(t.id, {
+                                  is_personal: v === true,
+                                  categorized_by: "user",
+                                  confidence: 1,
+                                })
+                              }
+                            />
+                            Personal
+                          </label>
+                          <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer">
+                            <Checkbox
+                              checked={t.is_transfer === true}
+                              onCheckedChange={(v) =>
+                                void onUpdateTransaction(t.id, {
+                                  is_transfer: v === true,
+                                  categorized_by: "user",
+                                  confidence: 1,
+                                })
+                              }
+                            />
+                            Transfer
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="col-span-2 flex justify-end items-center">
+                      <EditableCell
+                        value={t.amount.toFixed(2)}
+                        type="number"
+                        className={t.isIncome ? "text-green-600" : "text-red-600"}
+                        onSave={(value) => {
+                          const next = Number.parseFloat(value)
+                          void onUpdateTransaction(t.id, {
+                            amount: Number.isFinite(next) ? Math.abs(next) : t.amount,
+                          })
+                        }}
+                      />
+                    </div>
+
+                    <div className="col-span-2 flex items-center">
+                      <EditableCell
+                        value={t.category}
+                        type="select"
+                        options={TRANSACTION_CATEGORIES}
+                        onSave={(value) => {
+                          const { isIncome, is_personal, is_transfer } = inferFromCategory(value)
+                          void onUpdateTransaction(t.id, {
+                            category: value,
+                            isIncome,
+                            is_personal,
+                            is_transfer,
+                            categorized_by: "user",
+                            confidence: 1,
+                          })
+                        }}
+                      />
+                    </div>
+
+                    <span className="col-span-2 text-muted-foreground truncate">{t.account}</span>
+                  </div>
+                )
+              })}
           </div>
         )}
       </div>
@@ -528,6 +730,11 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
           <p className="text-muted-foreground text-sm">
             Click any category to expand transactions -- {dateRange.start} to {dateRange.end}
           </p>
+          {highlightedTransactionIds && highlightedTransactionIds.length > 0 && (
+            <p className="text-xs mt-2 text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
+              You have {highlightedTransactionIds.length} unsaved edit{highlightedTransactionIds.length === 1 ? "" : "s"}. Click the Save button to persist changes.
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={exportCSV}>
@@ -542,7 +749,11 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
         </div>
       </div>
 
-      <Tabs defaultValue="income-statement" className="space-y-4">
+      <Tabs
+        defaultValue="income-statement"
+        onValueChange={setActiveReportTab}
+        className="space-y-4"
+      >
         <TabsList>
           <TabsTrigger value="income-statement">Income Statement</TabsTrigger>
           <TabsTrigger value="category-analysis">All Categories</TabsTrigger>

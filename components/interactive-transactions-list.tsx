@@ -19,6 +19,10 @@ interface Transaction {
   category: string
   account: string
   isIncome: boolean
+  is_personal?: boolean
+  is_transfer?: boolean
+  categorized_by?: "rule" | "ai" | "user" | null
+  confidence?: number
   plaidTransactionId?: string
   merchantName?: string
   pending?: boolean
@@ -297,6 +301,23 @@ export function InteractiveTransactionsList({
       return
     }
     try {
+      const inferFlags = (category: string) => {
+        const c = (category || "").toLowerCase()
+        const is_personal = c.includes("personal") || c.includes("crypto / investments")
+        const is_transfer =
+          c.includes("credit card payment") ||
+          c.includes("member drawing") ||
+          c.includes("member contribution") ||
+          c.includes("owner draw") ||
+          c.includes("internal transfer") ||
+          c.includes("zelle / venmo transfer") ||
+          c.includes("brokerage transfer") ||
+          c.includes("business treasury") ||
+          c.includes("crypto / investments")
+        return { is_personal, is_transfer }
+      }
+
+      const { is_personal, is_transfer } = inferFlags(manualCategory)
       await onAddTransaction({
         date: manualDate,
         description: manualDescription.trim(),
@@ -304,6 +325,10 @@ export function InteractiveTransactionsList({
         category: manualCategory,
         account: manualAccount || defaultAccount,
         isIncome: manualIsIncome,
+        is_personal,
+        is_transfer,
+        categorized_by: "user",
+        confidence: 1,
       })
       toast({ title: "Manual transaction added", description: "You can now edit category/account as needed." })
       setManualDescription("")
@@ -318,7 +343,7 @@ export function InteractiveTransactionsList({
     if (cryptoExchangeTransactions.length === 0) return
     const updates = cryptoExchangeTransactions.map((t) => ({
       id: t.id,
-      updates: { category: "Crypto / Investments", isIncome: false },
+      updates: { category: "Crypto / Investments", isIncome: false, is_personal: true, is_transfer: true, categorized_by: "user", confidence: 1 },
     }))
     await onBulkUpdate(updates)
     toast({
@@ -380,6 +405,20 @@ export function InteractiveTransactionsList({
           "Member Contribution - Ruben Ruiz",
         ]
         updates.isIncome = revenueCategories.includes(value)
+        const c = String(value || "").toLowerCase()
+        updates.is_personal = c.includes("personal") || c.includes("crypto / investments")
+        updates.is_transfer =
+          c.includes("credit card payment") ||
+          c.includes("member drawing") ||
+          c.includes("member contribution") ||
+          c.includes("owner draw") ||
+          c.includes("internal transfer") ||
+          c.includes("zelle / venmo transfer") ||
+          c.includes("brokerage transfer") ||
+          c.includes("business treasury") ||
+          c.includes("crypto / investments")
+        updates.categorized_by = "user"
+        updates.confidence = 1
       }
 
       await onUpdateTransaction(transactionId, updates)
@@ -395,6 +434,19 @@ export function InteractiveTransactionsList({
   const handleBulkCategoryUpdate = async (category: string) => {
     if (selectedTransactions.size === 0) return
 
+    const c = (category || "").toLowerCase()
+    const is_personal = c.includes("personal") || c.includes("crypto / investments")
+    const is_transfer =
+      c.includes("credit card payment") ||
+      c.includes("member drawing") ||
+      c.includes("member contribution") ||
+      c.includes("owner draw") ||
+      c.includes("internal transfer") ||
+      c.includes("zelle / venmo transfer") ||
+      c.includes("brokerage transfer") ||
+      c.includes("business treasury") ||
+      c.includes("crypto / investments")
+
     const updates = Array.from(selectedTransactions).map((id) => ({
       id,
       updates: {
@@ -402,6 +454,10 @@ export function InteractiveTransactionsList({
         isIncome: ["Sales Revenue", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"].includes(
           category,
         ),
+        is_personal,
+        is_transfer,
+        categorized_by: "user",
+        confidence: 1,
       },
     }))
 
@@ -921,12 +977,30 @@ export function InteractiveTransactionsList({
               </div>
 
               <div className="col-span-2 flex items-center">
-                <EditableCell
-                  value={transaction.category}
-                  type="select"
-                  options={CATEGORIES}
-                  onSave={(value) => handleTransactionUpdate(transaction.id, "category", value)}
-                />
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <EditableCell
+                    value={transaction.category}
+                    type="select"
+                    options={CATEGORIES}
+                    onSave={(value) => handleTransactionUpdate(transaction.id, "category", value)}
+                  />
+                  {transaction.categorized_by && (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">
+                        {transaction.categorized_by === "rule"
+                          ? "Rules"
+                          : transaction.categorized_by === "ai"
+                            ? "AI"
+                            : "Manual"}
+                      </Badge>
+                      {typeof transaction.confidence === "number" && (
+                        <Badge variant="secondary" className="text-[10px] whitespace-nowrap">
+                          {Math.round(transaction.confidence * 100)}%
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="col-span-2 flex items-center">

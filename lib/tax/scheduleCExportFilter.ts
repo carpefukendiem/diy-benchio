@@ -19,6 +19,8 @@ export function isExcludedFromScheduleCExport(
     "internal transfer",
     "business treasury",
     "personal -",
+    "personal expense",
+    "personal - entertainment",
     "personal - investments",
     "zelle / venmo transfer",
   ]

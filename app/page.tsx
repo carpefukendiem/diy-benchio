@@ -60,6 +60,10 @@ interface Transaction {
   /** From categorization rules — used for Schedule C export exclusion */
   is_personal?: boolean
   is_transfer?: boolean
+  /** Where this categorization came from (rule/ai/user) */
+  categorized_by?: "rule" | "ai" | "user" | null
+  /** Confidence for rule/AI categorization */
+  confidence?: number
 }
 type NewTransactionInput = Omit<Transaction, "id">
 
@@ -144,6 +148,15 @@ export default function CaliforniaBusinessAccounting() {
   const { toast } = useToast()
 
   const [activeTab, setActiveTab] = useState("statements")
+
+  const markDirty = useCallback((ids: string[]) => {
+    if (!ids || ids.length === 0) return
+    setHighlightedTransactionIds(prev => {
+      const s = new Set(prev)
+      ids.forEach(id => s.add(id))
+      return Array.from(s)
+    })
+  }, [])
   const currentBusiness = useMemo(
     () => businesses.find((b) => b.id === currentBusinessId),
     [businesses, currentBusinessId]
@@ -179,8 +192,11 @@ export default function CaliforniaBusinessAccounting() {
   // Debounced save to localStorage
   useEffect(() => {
     if (!isHydrated || businesses.length === 0) return
+    // While there are unsaved edits (highlighted rows), we intentionally skip auto-persisting
+    // so the user must click SaveIndicator.
+    if (highlightedTransactionIds.length > 0) return
     debouncedSave("businesses", businesses)
-  }, [businesses, isHydrated])
+  }, [businesses, isHydrated, highlightedTransactionIds.length])
 
   useEffect(() => {
     if (currentBusinessId) {
@@ -188,11 +204,8 @@ export default function CaliforniaBusinessAccounting() {
     }
   }, [currentBusinessId])
 
-  useEffect(() => {
-    if (highlightedTransactionIds.length === 0) return
-    const timeout = window.setTimeout(() => setHighlightedTransactionIds([]), 8000)
-    return () => window.clearTimeout(timeout)
-  }, [highlightedTransactionIds])
+  // NOTE: highlightedTransactionIds now represent "unsaved edits".
+  // They must stay highlighted until the user clicks Save.
 
   const handleWizardComplete = useCallback((profile: TaxProfile) => {
     const newBusiness: BusinessData = {
@@ -248,6 +261,8 @@ export default function CaliforniaBusinessAccounting() {
           : b
       )
     )
+    markDirty([transactionId])
+    setForceAllUndoState(null)
   }, [currentBusinessId])
 
   const bulkUpdateTransactions = useCallback(async (updates: Array<{ id: string; updates: Partial<Transaction> }>) => {
@@ -264,6 +279,8 @@ export default function CaliforniaBusinessAccounting() {
         }
       })
     )
+    markDirty(updates.map(u => u.id))
+    setForceAllUndoState(null)
   }, [currentBusinessId])
 
   const addManualTransaction = useCallback(async (txn: NewTransactionInput) => {
@@ -275,6 +292,8 @@ export default function CaliforniaBusinessAccounting() {
           : b
       )
     )
+    markDirty([manualId])
+    setForceAllUndoState(null)
   }, [currentBusinessId])
 
   const handleStatementsUpdate = useCallback((statements: UploadedStatement[]) => {
@@ -318,7 +337,7 @@ export default function CaliforniaBusinessAccounting() {
         const dl = t.description.toLowerCase()
         if (dl.includes("upwork") && !t.isIncome) {
           updated++
-          return { ...t, category: "Freelance Income", isIncome: true }
+          return { ...t, category: "Freelance Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.9 }
         }
         return t
       }
@@ -346,6 +365,10 @@ export default function CaliforniaBusinessAccounting() {
               ...t,
               category: catInfo.name,
               isIncome: catInfo.isIncome,
+              is_personal: rule.is_personal,
+              is_transfer: rule.is_transfer,
+              categorized_by: "rule",
+              confidence: 0.9,
             }
           }
         }
@@ -365,6 +388,10 @@ export default function CaliforniaBusinessAccounting() {
               ...t,
               category: catInfo.name,
               isIncome: catInfo.isIncome,
+              is_personal: rule.is_personal,
+              is_transfer: rule.is_transfer,
+              categorized_by: "rule",
+              confidence: rule.confidence ?? 0.85,
             }
           }
         }
@@ -375,42 +402,43 @@ export default function CaliforniaBusinessAccounting() {
       const absAmount = Math.abs(amount)
 
       // Credits/deposits
-      if (amount > 0) {
+      if (t.isIncome) {
         if (dl.includes('payment') || dl.includes('credit') || dl.includes('refund')) {
           updated++
-          return { ...t, category: "Credit Card Payment", isIncome: false }
+          return { ...t, category: "Credit Card Payment", isIncome: false, is_personal: false, is_transfer: true, categorized_by: "rule", confidence: 0.4 }
         }
         if (amount > 500) {
           updated++
-          return { ...t, category: "Other Income", isIncome: true }
+          return { ...t, category: "Other Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
         }
         updated++
-        return { ...t, category: "Refunds Given", isIncome: true }
+        const isRefundLike = dl.includes('refund') || dl.includes('return') || dl.includes('purchase return')
+        return { ...t, category: isRefundLike ? "Refunds Given" : "Other Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
       }
 
       // Debits with keyword hints
       if (dl.includes('fee') || dl.includes('charge') || dl.includes('penalty')) {
         updated++
-        return { ...t, category: "Bank & ATM Fee Expense", isIncome: false }
+        return { ...t, category: "Bank & ATM Fee Expense", isIncome: false, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
       }
       if (dl.includes('dlr ') || dl.includes('dlr*')) {
         updated++
-        return { ...t, category: "Client Gifts", isIncome: false }
+        return { ...t, category: "Personal - Entertainment", isIncome: false, is_personal: true, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
       }
 
       // POS purchases: small ones → Office Supplies, larger → Personal Shopping
       if (dl.includes('purchase authorized') || dl.includes('pos purchase') || dl.includes('pos debit')) {
         updated++
         if (absAmount < 50) {
-          return { ...t, category: "Office Supplies", isIncome: false }
+          return { ...t, category: "Office Supplies", isIncome: false, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
         }
-        return { ...t, category: "Personal - Shopping", isIncome: false }
+        return { ...t, category: "Personal - Shopping", isIncome: false, is_personal: true, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
       }
 
       // Short merchant names with state abbreviations → likely restaurant
       if (absAmount < 30 && dl.length < 40 && /\b(ca|az|nv|tx|ny|fl|wa|or|co)\b/.test(dl)) {
         updated++
-        return { ...t, category: "Business Meals Expense", isIncome: false }
+        return { ...t, category: "Business Meals Expense", isIncome: false, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.4 }
       }
 
       return t
@@ -420,7 +448,10 @@ export default function CaliforniaBusinessAccounting() {
       .filter((next, idx) => {
         const prev = currentBusiness.transactions[idx]
         if (!prev) return false
-        return prev.category !== next.category || prev.isIncome !== next.isIncome
+        return prev.category !== next.category ||
+          prev.isIncome !== next.isIncome ||
+          prev.is_personal !== next.is_personal ||
+          prev.is_transfer !== next.is_transfer
       })
       .map((t) => t.id)
 
@@ -430,6 +461,8 @@ export default function CaliforniaBusinessAccounting() {
         changedIds,
       })
       setHighlightedTransactionIds(changedIds)
+    } else if (changedIds.length > 0) {
+      markDirty(changedIds)
     }
 
     updateCurrentBusiness({ transactions: newTransactions })
@@ -446,7 +479,7 @@ export default function CaliforniaBusinessAccounting() {
     }
 
     updateCurrentBusiness({ transactions: forceAllUndoState.previousTransactions })
-    setHighlightedTransactionIds(forceAllUndoState.changedIds)
+    setHighlightedTransactionIds([])
     setForceAllUndoState(null)
     toast({
       title: "Force All reverted",
@@ -460,6 +493,8 @@ export default function CaliforniaBusinessAccounting() {
       setBusinesses(cloudBusinesses)
       setCurrentBusinessId(cloudBusinesses[0].id)
       setShowWizard(false)
+      setHighlightedTransactionIds([])
+      setForceAllUndoState(null)
     }
   }, [])
 
@@ -726,7 +761,14 @@ export default function CaliforniaBusinessAccounting() {
                     {forceAllUndoState.changedIds.length} changes highlighted
                   </Badge>
                 )}
-                <SaveIndicator businesses={businesses} onLoad={handleCloudLoad} />
+                <SaveIndicator
+                  businesses={businesses}
+                  onLoad={handleCloudLoad}
+                  onAfterSave={() => {
+                    setHighlightedTransactionIds([])
+                    setForceAllUndoState(null)
+                  }}
+                />
                 <BusinessSelector
                   businesses={businessSelectorData}
                   currentBusinessId={currentBusinessId}
@@ -907,8 +949,10 @@ export default function CaliforniaBusinessAccounting() {
                   <InteractiveReports
                     transactions={currentBusiness.transactions}
                     onUpdateTransaction={updateTransaction}
+                    onBulkUpdate={bulkUpdateTransactions}
                     businessName={currentBusiness.profile.businessName}
                     dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
+                    highlightedTransactionIds={highlightedTransactionIds}
                   />
                 </Suspense>
               )}
@@ -1010,9 +1054,11 @@ function DeductionsTab({ currentBusiness, stats }: { currentBusiness: BusinessDa
     const relatedTransactions = currentBusiness.transactions.filter(
       (t) =>
         !t.isIncome &&
+        t.is_personal !== true &&
+        t.is_transfer !== true &&
         (mappedCategories.some((mc) => t.category === mc) ||
-          t.category.toLowerCase().includes(deduction.toLowerCase()) ||
-          t.description.toLowerCase().includes(deduction.toLowerCase())),
+          (t.category || "").toLowerCase().includes(deduction.toLowerCase()) ||
+          (t.description || "").toLowerCase().includes(deduction.toLowerCase())),
     )
     const totalAmount = relatedTransactions.reduce((sum, t) => sum + t.amount, 0)
     const deductPct = deduction === "meals" ? 0.5 : 1

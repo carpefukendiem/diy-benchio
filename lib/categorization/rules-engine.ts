@@ -936,16 +936,19 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'instant pmt from coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
   { pattern: 'kraken', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
   { pattern: 'coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
-  // --- Disney / DLR — all personal entertainment ---
-  { pattern: 'dlr wdtc', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'dlr coffee', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'dlr pym', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'dlr off the page', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  // --- Disney / DLR — treat retreat-related WDT C/WDTC + in-park spend as business travel ---
+  // Keep specific souvenir/shop patterns personal so they remain excluded from Schedule C.
+  { pattern: 'dlr wdtc', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  { pattern: 'dlr coffee', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  { pattern: 'dlr pym', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  { pattern: 'dlr off the page', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  // --- Souvenirs / shops (personal; exclude from Schedule C) ---
   { pattern: 'dlr studio store', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
   { pattern: 'dlr seaside souven', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
   { pattern: 'dlr rocket fizz', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'dlr ', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'dlr', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  // Neutralized catchalls: treat generic DLR spend as business travel, but souvenir/shop patterns above win first.
+  { pattern: 'dlr ', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  { pattern: 'dlr', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
   // --- PayPal personal purchases (before generic PayPal) ---
   { pattern: 'paypal *thrivecaus', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'paypal inst xfer honeylove', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
