@@ -1,6 +1,16 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useDeferredValue,
+  useRef,
+  useCallback,
+  memo,
+  type MouseEvent as ReactMouseEvent,
+} from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -138,6 +148,139 @@ export const CATEGORIES = [
   "Crypto / Investments",
 ]
 
+const TX_TABLE_COL_WIDTHS_KEY = "diy-benchio.txTable.colWidths"
+
+type TxColWidths = {
+  checkbox: number
+  date: number
+  description: number
+  amount: number
+  category: number
+  account: number
+}
+
+const DEFAULT_TX_COL_WIDTHS: TxColWidths = {
+  checkbox: 44,
+  date: 118,
+  description: 320,
+  amount: 104,
+  category: 240,
+  account: 200,
+}
+
+const MIN_COL = 72
+
+function ColumnResizeHandle({ onDragStart }: { onDragStart: (e: ReactMouseEvent) => void }) {
+  return (
+    <div
+      className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize select-none hover:bg-primary/35"
+      onMouseDown={(e: ReactMouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onDragStart(e)
+      }}
+      role="separator"
+      aria-orientation="vertical"
+      title="Drag to resize column"
+    />
+  )
+}
+
+const TransactionTableRow = memo(function TransactionTableRow({
+  transaction,
+  gridTemplate,
+  isHighlighted,
+  isSelected,
+  onToggleSelect,
+  onUpdate,
+  accounts,
+}: {
+  transaction: Transaction
+  gridTemplate: string
+  isHighlighted: boolean
+  isSelected: boolean
+  onToggleSelect: () => void
+  onUpdate: (id: string, field: keyof Transaction, value: unknown) => void
+  accounts: string[]
+}) {
+  return (
+    <div
+      className={`gap-2 p-3 border rounded-lg hover:bg-muted transition-colors ${
+        isSelected ? "bg-accent border-border" : ""
+      } ${isHighlighted ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""}`}
+      style={{ display: "grid", gridTemplateColumns: gridTemplate, alignItems: "start" }}
+    >
+      <div className="flex items-start pt-1">
+        <Checkbox checked={isSelected} onCheckedChange={() => onToggleSelect()} />
+      </div>
+
+      <div className="min-w-0 flex items-start pt-0.5">
+        <EditableCell value={transaction.date} type="date" onSave={(value) => onUpdate(transaction.id, "date", value)} />
+      </div>
+
+      <div className="min-w-0 flex flex-col gap-1">
+        <EditableCell
+          value={transaction.description}
+          type="text"
+          noTruncate
+          onSave={(value) => onUpdate(transaction.id, "description", value)}
+        />
+        {transaction.merchantName && (
+          <Badge variant="outline" className="text-xs w-fit max-w-full whitespace-normal break-words">
+            {transaction.merchantName}
+          </Badge>
+        )}
+      </div>
+
+      <div className="min-w-0 flex items-start pt-0.5">
+        <div className={`font-semibold ${transaction.isIncome ? "text-green-600" : "text-red-600"}`}>
+          {transaction.isIncome ? "+" : "-"}$
+          <EditableCell
+            value={transaction.amount.toString()}
+            type="number"
+            onSave={(value) => onUpdate(transaction.id, "amount", Number.parseFloat(value))}
+            className="inline"
+          />
+        </div>
+      </div>
+
+      <div className="min-w-0 flex flex-col gap-1">
+        <EditableCell
+          value={transaction.category}
+          type="select"
+          options={CATEGORIES}
+          noTruncate
+          selectTriggerClassName="max-w-full"
+          onSave={(value) => onUpdate(transaction.id, "category", value)}
+        />
+        {transaction.categorized_by && (
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant="outline" className="text-[10px] whitespace-nowrap">
+              {transaction.categorized_by === "rule" ? "Rules" : transaction.categorized_by === "ai" ? "AI" : "Manual"}
+            </Badge>
+            {typeof transaction.confidence === "number" && (
+              <Badge variant="secondary" className="text-[10px] whitespace-nowrap">
+                {Math.round(transaction.confidence * 100)}%
+              </Badge>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0 flex items-start pt-0.5">
+        <EditableCell
+          value={transaction.account}
+          type="select"
+          options={accounts}
+          noTruncate
+          selectTriggerClassName="max-w-full"
+          onSave={(value) => onUpdate(transaction.id, "account", value)}
+        />
+      </div>
+    </div>
+  )
+})
+
 export function InteractiveTransactionsList({
   transactions,
   onUpdateTransaction,
@@ -156,8 +299,9 @@ export function InteractiveTransactionsList({
   const [newViewName, setNewViewName] = useState("")
   const [recurringCategory, setRecurringCategory] = useState("Phone & Internet Expense")
   const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set())
-  const [editingTransaction, setEditingTransaction] = useState<string | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
+  const [bulkCategory, setBulkCategory] = useState("Phone & Internet Expense")
+  const [colWidths, setColWidths] = useState<TxColWidths>(DEFAULT_TX_COL_WIDTHS)
   const [showManualForm, setShowManualForm] = useState(false)
   const [manualDate, setManualDate] = useState(new Date().toISOString().split("T")[0])
   const [manualDescription, setManualDescription] = useState("")
@@ -168,6 +312,20 @@ export function InteractiveTransactionsList({
   const { toast } = useToast()
 
   const highlightedSet = useMemo(() => new Set(highlightedTransactionIds), [highlightedTransactionIds])
+  const deferredSearch = useDeferredValue(searchTerm)
+  const colWidthsRef = useRef(colWidths)
+  colWidthsRef.current = colWidths
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TX_TABLE_COL_WIDTHS_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Partial<TxColWidths>
+      setColWidths((prev) => ({ ...prev, ...parsed }))
+    } catch {
+      // ignore
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -191,12 +349,12 @@ export function InteractiveTransactionsList({
 
   const filteredTransactions = useMemo(() => {
     const filtered = transactions.filter((transaction) => {
-      const sl = searchTerm.toLowerCase()
-      const matchesSearch = !searchTerm ||
+      const sl = deferredSearch.toLowerCase()
+      const matchesSearch = !deferredSearch.trim() ||
         transaction.description.toLowerCase().includes(sl) ||
         transaction.merchantName?.toLowerCase().includes(sl) ||
         transaction.category?.toLowerCase().includes(sl) ||
-        transaction.amount.toString().includes(searchTerm)
+        transaction.amount.toString().includes(deferredSearch)
       const matchesCategory = categoryFilter === "all" || 
         (categoryFilter === "uncategorized" ? (!transaction.category || transaction.category === "Uncategorized Expense") : transaction.category === categoryFilter)
       const matchesAccount = accountFilter === "all" || transaction.account === accountFilter
@@ -224,11 +382,52 @@ export function InteractiveTransactionsList({
       if (a.amount !== b.amount) return b.amount - a.amount
       return (a.description || "").localeCompare(b.description || "")
     })
-  }, [transactions, searchTerm, categoryFilter, accountFilter, sortBy, showChangedOnly, highlightedSet])
+  }, [transactions, deferredSearch, categoryFilter, accountFilter, sortBy, showChangedOnly, highlightedSet])
 
-  const accounts = Array.from(new Set(transactions.map((t) => t.account)))
+  const accounts = useMemo(() => Array.from(new Set(transactions.map((t) => t.account))), [transactions])
   const defaultAccount = accounts[0] || "Business Checking"
   const [manualAccount, setManualAccount] = useState(defaultAccount)
+
+  const gridTemplate = useMemo(
+    () =>
+      `${colWidths.checkbox}px ${colWidths.date}px ${colWidths.description}px ${colWidths.amount}px ${colWidths.category}px ${colWidths.account}px`,
+    [colWidths],
+  )
+
+  const scrollParentRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useVirtualizer({
+    count: filteredTransactions.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => 104,
+    overscan: 12,
+  })
+
+  const persistColWidths = useCallback((w: TxColWidths) => {
+    try {
+      localStorage.setItem(TX_TABLE_COL_WIDTHS_KEY, JSON.stringify(w))
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const startResize = useCallback(
+    (key: keyof TxColWidths) => (e: ReactMouseEvent) => {
+      const startX = e.clientX
+      const startW = colWidthsRef.current[key]
+      const onMove = (ev: globalThis.MouseEvent) => {
+        const next = Math.max(MIN_COL, Math.round(startW + (ev.clientX - startX)))
+        setColWidths((prev) => ({ ...prev, [key]: next }))
+      }
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove)
+        document.removeEventListener("mouseup", onUp)
+        persistColWidths(colWidthsRef.current)
+      }
+      document.addEventListener("mousemove", onMove)
+      document.addEventListener("mouseup", onUp)
+    },
+    [persistColWidths],
+  )
 
   const auditYear = useMemo(() => {
     const years = transactions
@@ -327,7 +526,7 @@ export function InteractiveTransactionsList({
         isIncome: manualIsIncome,
         is_personal,
         is_transfer,
-        categorized_by: "user",
+        categorized_by: "user" as const,
         confidence: 1,
       })
       toast({ title: "Manual transaction added", description: "You can now edit category/account as needed." })
@@ -343,7 +542,14 @@ export function InteractiveTransactionsList({
     if (cryptoExchangeTransactions.length === 0) return
     const updates = cryptoExchangeTransactions.map((t) => ({
       id: t.id,
-      updates: { category: "Crypto / Investments", isIncome: false, is_personal: true, is_transfer: true, categorized_by: "user", confidence: 1 },
+      updates: {
+        category: "Crypto / Investments",
+        isIncome: false,
+        is_personal: true,
+        is_transfer: true,
+        categorized_by: "user" as const,
+        confidence: 1,
+      },
     }))
     await onBulkUpdate(updates)
     toast({
@@ -389,47 +595,50 @@ export function InteractiveTransactionsList({
     persistViews(savedViews.filter((v) => v.id !== id))
   }
 
-  const handleTransactionUpdate = async (transactionId: string, field: keyof Transaction, value: any) => {
-    try {
-      const updates: Partial<Transaction> = { [field]: value }
+  const handleTransactionUpdate = useCallback(
+    async (transactionId: string, field: keyof Transaction, value: unknown) => {
+      try {
+        const updates: Partial<Transaction> = { [field]: value } as Partial<Transaction>
 
-      // Auto-detect income vs expense based on category
-      if (field === "category") {
-        const revenueCategories = [
-          "Sales Revenue",
-          "Service Income",
-          "Freelance Income",
-          "Interest Income",
-          "Other Income",
-          "Refunds Given",
-          "Member Contribution - Ruben Ruiz",
-        ]
-        updates.isIncome = revenueCategories.includes(value)
-        const c = String(value || "").toLowerCase()
-        updates.is_personal = c.includes("personal") || c.includes("crypto / investments")
-        updates.is_transfer =
-          c.includes("credit card payment") ||
-          c.includes("member drawing") ||
-          c.includes("member contribution") ||
-          c.includes("owner draw") ||
-          c.includes("internal transfer") ||
-          c.includes("zelle / venmo transfer") ||
-          c.includes("brokerage transfer") ||
-          c.includes("business treasury") ||
-          c.includes("crypto / investments")
-        updates.categorized_by = "user"
-        updates.confidence = 1
+        // Auto-detect income vs expense based on category
+        if (field === "category") {
+          const revenueCategories = [
+            "Sales Revenue",
+            "Service Income",
+            "Freelance Income",
+            "Interest Income",
+            "Other Income",
+            "Refunds Given",
+            "Member Contribution - Ruben Ruiz",
+          ]
+          updates.isIncome = revenueCategories.includes(value as string)
+          const c = String(value || "").toLowerCase()
+          updates.is_personal = c.includes("personal") || c.includes("crypto / investments")
+          updates.is_transfer =
+            c.includes("credit card payment") ||
+            c.includes("member drawing") ||
+            c.includes("member contribution") ||
+            c.includes("owner draw") ||
+            c.includes("internal transfer") ||
+            c.includes("zelle / venmo transfer") ||
+            c.includes("brokerage transfer") ||
+            c.includes("business treasury") ||
+            c.includes("crypto / investments")
+          updates.categorized_by = "user"
+          updates.confidence = 1
+        }
+
+        await onUpdateTransaction(transactionId, updates)
+      } catch {
+        toast({
+          title: "Error",
+          description: "Failed to update transaction",
+          variant: "destructive",
+        })
       }
-
-      await onUpdateTransaction(transactionId, updates)
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update transaction",
-        variant: "destructive",
-      })
-    }
-  }
+    },
+    [onUpdateTransaction, toast],
+  )
 
   const handleBulkCategoryUpdate = async (category: string) => {
     if (selectedTransactions.size === 0) return
@@ -456,7 +665,7 @@ export function InteractiveTransactionsList({
         ),
         is_personal,
         is_transfer,
-        categorized_by: "user",
+        categorized_by: "user" as const,
         confidence: 1,
       },
     }))
@@ -863,6 +1072,9 @@ export function InteractiveTransactionsList({
           </div>
           <p className="text-xs text-muted-foreground">
             Showing {filteredTransactions.length} of {transactions.length} transactions
+            {searchTerm !== deferredSearch ? (
+              <span className="ml-2 text-amber-700 dark:text-amber-300">Updating search…</span>
+            ) : null}
           </p>
 
           {/* Bulk Actions */}
@@ -887,132 +1099,115 @@ export function InteractiveTransactionsList({
           {/* Bulk Edit Panel */}
           {bulkEditMode && selectedTransactions.size > 0 && (
             <div className="p-4 bg-muted rounded-lg border">
-              <h4 className="font-medium mb-3">Bulk Update Category</h4>
-              <div className="flex gap-2 flex-wrap">
-                {CATEGORIES.map((category) => (
-                  <Button
-                    key={category}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleBulkCategoryUpdate(category)}
-                    className="text-xs"
-                  >
-                    {category}
-                  </Button>
-                ))}
+              <h4 className="font-medium mb-3">Bulk update category</h4>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">
+                  <span className="text-xs text-muted-foreground">Category</span>
+                  <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                    <SelectTrigger className="min-h-10 h-auto text-xs text-left [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:break-words">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button size="sm" onClick={() => handleBulkCategoryUpdate(bulkCategory)}>
+                  Apply to {selectedTransactions.size} selected
+                </Button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Transactions Table */}
+        {/* Transactions Table — resizable columns + virtualized rows */}
         <div className="space-y-2">
-          {/* Header */}
-          <div className="grid grid-cols-12 gap-4 p-3 bg-muted rounded-lg font-medium text-sm">
-            <div className="col-span-1">
-              <Checkbox
-                checked={selectedTransactions.size === filteredTransactions.length && filteredTransactions.length > 0}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    selectAllVisible()
-                  } else {
-                    clearSelection()
-                  }
-                }}
-              />
-            </div>
-            <div className="col-span-2">Date</div>
-            <div className="col-span-3">Description</div>
-            <div className="col-span-2">Amount</div>
-            <div className="col-span-2">Category</div>
-            <div className="col-span-2">Account</div>
-          </div>
-
-          {/* Transaction Rows */}
-          {filteredTransactions.map((transaction) => (
+          <div className="overflow-x-auto rounded-lg border bg-muted/30">
             <div
-              key={transaction.id}
-              className={`grid grid-cols-12 gap-4 p-3 border rounded-lg hover:bg-muted transition-colors ${
-                selectedTransactions.has(transaction.id) ? "bg-accent border-border" : ""
-              } ${highlightedSet.has(transaction.id) ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""}`}
+              className="min-w-full"
+              style={{
+                minWidth: colWidths.checkbox + colWidths.date + colWidths.description + colWidths.amount + colWidths.category + colWidths.account + 48,
+              }}
             >
-              <div className="col-span-1 flex items-center">
-                <Checkbox
-                  checked={selectedTransactions.has(transaction.id)}
-                  onCheckedChange={() => toggleTransactionSelection(transaction.id)}
-                />
+              <div
+                className="grid gap-2 p-3 bg-muted rounded-t-lg font-medium text-xs items-center"
+                style={{ gridTemplateColumns: gridTemplate }}
+              >
+                <div className="relative flex items-center justify-center pr-1 min-h-8">
+                  <Checkbox
+                    checked={selectedTransactions.size === filteredTransactions.length && filteredTransactions.length > 0}
+                    onCheckedChange={(checked) => {
+                      if (checked) selectAllVisible()
+                      else clearSelection()
+                    }}
+                  />
+                  <ColumnResizeHandle onDragStart={startResize("checkbox")} />
+                </div>
+                <div className="relative flex items-center pl-1 pr-2 text-muted-foreground">
+                  Date
+                  <ColumnResizeHandle onDragStart={startResize("date")} />
+                </div>
+                <div className="relative flex items-center pl-1 pr-2">
+                  Description
+                  <ColumnResizeHandle onDragStart={startResize("description")} />
+                </div>
+                <div className="relative flex items-center justify-end pl-1 pr-2">
+                  Amount
+                  <ColumnResizeHandle onDragStart={startResize("amount")} />
+                </div>
+                <div className="relative flex items-center pl-1 pr-2 min-w-0">
+                  <span className="truncate">Category</span>
+                  <ColumnResizeHandle onDragStart={startResize("category")} />
+                </div>
+                <div className="relative flex items-center pl-1 pr-2 min-w-0">
+                  Account
+                  <ColumnResizeHandle onDragStart={startResize("account")} />
+                </div>
               </div>
 
-              <div className="col-span-2 flex items-center">
-                <EditableCell
-                  value={transaction.date}
-                  type="date"
-                  onSave={(value) => handleTransactionUpdate(transaction.id, "date", value)}
-                />
-              </div>
-
-              <div className="col-span-3 flex items-center">
-                <EditableCell
-                  value={transaction.description}
-                  type="text"
-                  onSave={(value) => handleTransactionUpdate(transaction.id, "description", value)}
-                />
-                {transaction.merchantName && (
-                  <Badge variant="outline" className="ml-2 text-xs">
-                    {transaction.merchantName}
-                  </Badge>
+              <div
+                ref={scrollParentRef}
+                className="max-h-[min(70vh,560px)] overflow-auto rounded-b-lg border-t bg-background"
+              >
+                {filteredTransactions.length === 0 ? null : (
+                  <div
+                    className="relative w-full"
+                    style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                  >
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const transaction = filteredTransactions[virtualRow.index]
+                      return (
+                        <div
+                          key={transaction.id}
+                          data-index={virtualRow.index}
+                          ref={rowVirtualizer.measureElement}
+                          className="absolute left-0 top-0 w-full box-border px-0 py-1"
+                          style={{
+                            transform: `translateY(${virtualRow.start}px)`,
+                            minHeight: Math.max(virtualRow.size, 1),
+                          }}
+                        >
+                          <TransactionTableRow
+                            transaction={transaction}
+                            gridTemplate={gridTemplate}
+                            isHighlighted={highlightedSet.has(transaction.id)}
+                            isSelected={selectedTransactions.has(transaction.id)}
+                            onToggleSelect={() => toggleTransactionSelection(transaction.id)}
+                            onUpdate={handleTransactionUpdate}
+                            accounts={accounts}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
-
-              <div className="col-span-2 flex items-center">
-                <div className={`font-semibold ${transaction.isIncome ? "text-green-600" : "text-red-600"}`}>
-                  {transaction.isIncome ? "+" : "-"}$
-                  <EditableCell
-                    value={transaction.amount.toString()}
-                    type="number"
-                    onSave={(value) => handleTransactionUpdate(transaction.id, "amount", Number.parseFloat(value))}
-                    className="inline"
-                  />
-                </div>
-              </div>
-
-              <div className="col-span-2 flex items-center">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <EditableCell
-                    value={transaction.category}
-                    type="select"
-                    options={CATEGORIES}
-                    onSave={(value) => handleTransactionUpdate(transaction.id, "category", value)}
-                  />
-                  {transaction.categorized_by && (
-                    <div className="flex items-center gap-1 min-w-0">
-                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">
-                        {transaction.categorized_by === "rule"
-                          ? "Rules"
-                          : transaction.categorized_by === "ai"
-                            ? "AI"
-                            : "Manual"}
-                      </Badge>
-                      {typeof transaction.confidence === "number" && (
-                        <Badge variant="secondary" className="text-[10px] whitespace-nowrap">
-                          {Math.round(transaction.confidence * 100)}%
-                        </Badge>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="col-span-2 flex items-center">
-                <EditableCell
-                  value={transaction.account}
-                  type="select"
-                  options={accounts}
-                  onSave={(value) => handleTransactionUpdate(transaction.id, "account", value)}
-                />
-              </div>
             </div>
-          ))}
+          </div>
         </div>
 
         {filteredTransactions.length === 0 && (
