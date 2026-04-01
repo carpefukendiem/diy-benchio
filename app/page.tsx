@@ -437,7 +437,12 @@ export default function CaliforniaBusinessAccounting() {
         }
       }
 
-      const isUpworkLike = dl.includes("upwork") || dl.includes("upwk")
+      const isUpworkLike =
+        dl.includes("upwork") ||
+        dl.includes("upwk") ||
+        dl.includes("from upwork ca") ||
+        dl.includes("upwork ca") ||
+        /up\s*work/.test(dl)
 
       // Skip user-categorized transactions unless forceAll (don't override manual edits).
       // Rule/AI-tagged rows may be re-processed so improved patterns (e.g. GHL / messaging credits) can fix Sales Revenue.

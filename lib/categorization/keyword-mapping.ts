@@ -106,6 +106,10 @@ const KEYWORD_MAPPING_TABLE: KeywordRow[] = [
   { pattern: "square", category_id: CAT.merchantFees, priority: 65 },
   { pattern: "merchant fee", category_id: CAT.merchantFees, priority: 75 },
 
+  // Upwork income transfer descriptors from bank feeds
+  { pattern: "from upwork ca", category_id: "00000000-0000-0000-0001-000000000004", priority: 98 },
+  { pattern: "upwork ca", category_id: "00000000-0000-0000-0001-000000000004", priority: 92 },
+
   // Professional services
   { pattern: "cpa", category_id: CAT.professional, priority: 75 },
   { pattern: "accounting", category_id: CAT.professional, priority: 50 },

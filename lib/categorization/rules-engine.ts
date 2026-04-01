@@ -914,6 +914,7 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'stripe transfer', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'stripe payout', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'upwork escrow', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'from upwork ca', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   // --- Transfers / excluded from Schedule C ---
   { pattern: 'save as you go', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
   { pattern: 'recurring transfer to ruiz r way2save', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
