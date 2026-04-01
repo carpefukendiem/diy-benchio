@@ -417,7 +417,23 @@ export default function CaliforniaBusinessAccounting() {
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const newTransactions = currentBusiness.transactions.map(t => {
       const dl = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase()
+      const dlNorm = dl.replace(/\s+/g, " ")
       const absAmt = Math.abs(t.amount || 0)
+
+      // Explicit bank transfer phrasing for Upwork payouts.
+      // Example: "Money Transfer authorized on 11/06 From Upwork CA ..."
+      if (dlNorm.includes("money transfer authorized") && dlNorm.includes("from upwork ca")) {
+        updated++
+        return {
+          ...t,
+          category: "Freelance Income",
+          isIncome: true,
+          is_personal: false,
+          is_transfer: false,
+          categorized_by: "rule",
+          confidence: 0.99,
+        }
+      }
 
       // Align with server rules engine: high-priority patterns first (Prime Video, crypto, DLR, etc.)
       const hp = matchHighPriorityDescription(dl, absAmt)
