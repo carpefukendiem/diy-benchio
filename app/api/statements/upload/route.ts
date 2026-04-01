@@ -83,7 +83,7 @@ function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" 
 // We reassemble multi-line transactions (description wraps) then parse amounts.
 // ========================================
 function parseWFPDFText(text: string) {
-  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","purchase return","refund","overdraft protection from","instant pmt from","deposit"]
+  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","from upwork","upwork","money transfer from","purchase return","refund","overdraft protection from","instant pmt from","deposit","payment received"]
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
   // Year from header: "January 31, 2025" or "December 31, 2025"
@@ -713,7 +713,7 @@ function toUIFormat(categorized: any[] | undefined | null) {
       description: tx.description,
       amount: Math.abs(tx.amount),
       category: categoryName,
-      isIncome: tx.type === "credit",
+      isIncome: tx.type === "credit" || (tx.category_id?.startsWith("00000000-0000-0000-0001-") ?? false),
       merchantName,
       pending: false,
       is_personal: Boolean(tx.is_personal),
