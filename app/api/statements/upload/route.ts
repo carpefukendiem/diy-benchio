@@ -83,7 +83,23 @@ function detectStatementType(text: string): "wellsfargo" | "chase" | "barclays" 
 // We reassemble multi-line transactions (description wraps) then parse amounts.
 // ========================================
 function parseWFPDFText(text: string) {
-  const creditKW = ["stripe transfer","zelle from","online transfer from","upwork escrow","from upwork","upwork","money transfer from","purchase return","refund","overdraft protection from","instant pmt from","deposit","payment received"]
+  const creditKW = [
+    "stripe transfer",
+    "zelle from",
+    "online transfer from",
+    "upwork escrow",
+    "from upwork",
+    "upwork",
+    "upwork ca",
+    "money transfer from",
+    "money transfer authorized",
+    "purchase return",
+    "refund",
+    "overdraft protection from",
+    "instant pmt from",
+    "deposit",
+    "payment received",
+  ]
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
   // Year from header: "January 31, 2025" or "December 31, 2025"
@@ -593,7 +609,17 @@ function parseWellsFargoTextExport(lines: string[]) {
   const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+)/
 
   // Credit keywords (these are deposits / income)
-  const creditKW = ["stripe transfer", "online transfer from", "deposit", "credit memo", "interest payment"]
+  const creditKW = [
+    "stripe transfer",
+    "online transfer from",
+    "from upwork",
+    "upwork",
+    "upwork ca",
+    "money transfer authorized",
+    "deposit",
+    "credit memo",
+    "interest payment",
+  ]
 
   let current: { date: string; description: string; amounts: number[]; type: string; raw: string } | null = null
 
