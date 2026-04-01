@@ -139,6 +139,48 @@ function debouncedSave(key: string, value: any, delay = 500) {
   }, delay)
 }
 
+function dedupeTransactions(transactions: Transaction[]): { deduped: Transaction[]; removedCount: number } {
+  if (!transactions || transactions.length === 0) return { deduped: [], removedCount: 0 }
+
+  const groups = new Map<string, Transaction[]>()
+  for (const t of transactions) {
+    const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
+    const key = `${t.date}|${Number(t.amount).toFixed(2)}|${merchantish}`
+    const arr = groups.get(key) || []
+    arr.push(t)
+    groups.set(key, arr)
+  }
+
+  const score = (t: Transaction): number => {
+    const account = (t.account || "").toLowerCase()
+    const accountScore =
+      account.includes("business") || account.includes("checking") || account.includes("credit")
+        ? 3
+        : account.includes("personal")
+          ? -3
+          : 0
+    const provenanceScore =
+      t.categorized_by === "user" ? 4 : t.categorized_by === "ai" ? 2 : t.categorized_by === "rule" ? 1 : 0
+    const confidenceScore = Math.round((t.confidence ?? 0) * 10)
+    const attachmentScore = t.receiptImageDataUrl ? 2 : 0
+    const notesScore = t.notes?.trim() ? 1 : 0
+    return accountScore + provenanceScore + confidenceScore + attachmentScore + notesScore
+  }
+
+  const deduped: Transaction[] = []
+  let removedCount = 0
+  for (const set of groups.values()) {
+    if (set.length === 1) {
+      deduped.push(set[0])
+      continue
+    }
+    const sorted = [...set].sort((a, b) => score(b) - score(a))
+    deduped.push(sorted[0])
+    removedCount += sorted.length - 1
+  }
+  return { deduped, removedCount }
+}
+
 export default function CaliforniaBusinessAccounting() {
   const [businesses, setBusinesses] = useState<BusinessData[]>([])
   const [currentBusinessId, setCurrentBusinessId] = useState<string>("")
@@ -167,6 +209,22 @@ export default function CaliforniaBusinessAccounting() {
     [businesses, currentBusinessId]
   )
 
+  // Auto-heal legacy duplicated rows already in localStorage/cloud snapshots.
+  useEffect(() => {
+    if (!currentBusiness) return
+    const { deduped, removedCount } = dedupeTransactions(currentBusiness.transactions || [])
+    if (removedCount <= 0) return
+    setBusinesses((prev) =>
+      prev.map((b) => (b.id === currentBusinessId ? { ...b, transactions: deduped } : b)),
+    )
+    setHighlightedTransactionIds([])
+    setForceAllUndoState(null)
+    toast({
+      title: "Duplicates removed",
+      description: `${removedCount} duplicate row(s) were removed automatically from your current ledger.`,
+    })
+  }, [currentBusiness, currentBusinessId, toast])
+
   // Load from localStorage once on mount — skip wizard if any data exists
   useEffect(() => {
     try {
@@ -174,9 +232,13 @@ export default function CaliforniaBusinessAccounting() {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (parsed.length > 0) {
-          setBusinesses(parsed)
+          const cleaned = parsed.map((b: BusinessData) => {
+            const { deduped } = dedupeTransactions(b.transactions || [])
+            return { ...b, transactions: deduped }
+          })
+          setBusinesses(cleaned)
           const lastId = localStorage.getItem("lastBusinessId")
-          setCurrentBusinessId(lastId || parsed[0].id)
+          setCurrentBusinessId(lastId || cleaned[0].id)
           // Data found — go straight to dashboard
           setShowWizard(false)
         } else {
@@ -324,10 +386,11 @@ export default function CaliforniaBusinessAccounting() {
       prev.map((b) => {
         if (b.id !== currentBusinessId) return b
         const receiptTxns = b.transactions.filter((t) => t.id.startsWith("receipt-txn-"))
+        const { deduped } = dedupeTransactions([...statementTransactions, ...receiptTxns])
         return {
           ...b,
           uploadedStatements: statements,
-          transactions: [...statementTransactions, ...receiptTxns],
+          transactions: deduped,
           lastSync: new Date().toLocaleString(),
         }
       }),
@@ -536,8 +599,12 @@ export default function CaliforniaBusinessAccounting() {
   // Cloud load handler — replaces localStorage data with Supabase data
   const handleCloudLoad = useCallback((cloudBusinesses: BusinessData[]) => {
     if (cloudBusinesses && cloudBusinesses.length > 0) {
-      setBusinesses(cloudBusinesses)
-      setCurrentBusinessId(cloudBusinesses[0].id)
+      const cleaned = cloudBusinesses.map((b) => {
+        const { deduped } = dedupeTransactions(b.transactions || [])
+        return { ...b, transactions: deduped }
+      })
+      setBusinesses(cleaned)
+      setCurrentBusinessId(cleaned[0].id)
       setShowWizard(false)
       setHighlightedTransactionIds([])
       setForceAllUndoState(null)
