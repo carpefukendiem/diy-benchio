@@ -24,7 +24,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
-import { BUILT_IN_RULES, CATEGORY_ID_TO_NAME } from "@/lib/categorization/rules-engine"
+import { BUILT_IN_RULES, CATEGORY_ID_TO_NAME, matchHighPriorityDescription } from "@/lib/categorization/rules-engine"
 import { computeUiExpenseTotals } from "@/lib/tax/treatment"
 import { KEYWORD_MAPPING_RULES } from "@/lib/categorization/keyword-mapping"
 import { RetirementOptimizer } from "@/components/retirement-optimizer"
@@ -57,6 +57,11 @@ interface Transaction {
   isIncome: boolean
   merchantName?: string
   pending?: boolean
+  /** Optional memo (manual entry, receipt context) */
+  notes?: string
+  /** Data URL for an attached receipt image or PDF (stored with the business in localStorage) */
+  receiptImageDataUrl?: string
+  receiptImageFileName?: string
   /** From categorization rules — used for Schedule C export exclusion */
   is_personal?: boolean
   is_transfer?: boolean
@@ -331,18 +336,42 @@ export default function CaliforniaBusinessAccounting() {
     let updated = 0
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const newTransactions = currentBusiness.transactions.map(t => {
-      // Skip user-categorized transactions unless forceAll (don't override manual edits)
-      if (!forceAll && t.category && t.category !== "Uncategorized Expense" && t.category !== "") {
-        // But DO check if Upwork income is miscategorized
-        const dl = t.description.toLowerCase()
+      const dl = t.description.toLowerCase()
+      const absAmt = Math.abs(t.amount || 0)
+
+      // Align with server rules engine: high-priority patterns first (Prime Video, crypto, DLR, etc.)
+      const hp = matchHighPriorityDescription(dl, absAmt)
+      if (hp && (forceAll || t.categorized_by !== "user")) {
+        const catInfo = CATEGORY_ID_TO_NAME[hp.category_id]
+        if (catInfo) {
+          updated++
+          return {
+            ...t,
+            category: catInfo.name,
+            isIncome: catInfo.isIncome,
+            is_personal: hp.is_personal,
+            is_transfer: hp.is_transfer,
+            categorized_by: "rule",
+            confidence: hp.confidence,
+          }
+        }
+      }
+
+      // Skip user-categorized transactions unless forceAll (don't override manual edits).
+      // Rule/AI-tagged rows may be re-processed so improved patterns (e.g. GHL / messaging credits) can fix Sales Revenue.
+      if (
+        !forceAll &&
+        t.categorized_by === "user" &&
+        t.category &&
+        t.category !== "Uncategorized Expense" &&
+        t.category !== ""
+      ) {
         if (dl.includes("upwork") && !t.isIncome) {
           updated++
           return { ...t, category: "Freelance Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.9 }
         }
         return t
       }
-
-      const dl = t.description.toLowerCase()
       
       // Keyword mapping layer (customRules) — applied before built-in rules
       for (const rule of keywordRules) {
@@ -516,6 +545,11 @@ export default function CaliforniaBusinessAccounting() {
               isIncome: false,
               account: "Cash / Receipt",
               merchantName: r.merchantName,
+              notes: r.notes || "",
+              receiptImageDataUrl: r.fileUrl,
+              receiptImageFileName: r.fileName,
+              categorized_by: "user" as const,
+              confidence: 1,
             }))
           return { ...b, receipts, transactions: [...nonReceiptTxns, ...receiptTxns] }
         }),

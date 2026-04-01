@@ -9,6 +9,7 @@ import {
   useCallback,
   memo,
   type MouseEvent as ReactMouseEvent,
+  type ChangeEvent,
 } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -18,6 +19,8 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { EditableCell } from "@/components/editable-cell"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { compressImageIfNeeded, readFileAsDataUrl } from "@/lib/client/compress-image"
 import { RefreshCw, Search, Download, Edit3, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -29,6 +32,9 @@ interface Transaction {
   category: string
   account: string
   isIncome: boolean
+  notes?: string
+  receiptImageDataUrl?: string
+  receiptImageFileName?: string
   is_personal?: boolean
   is_transfer?: boolean
   categorized_by?: "rule" | "ai" | "user" | null
@@ -186,6 +192,94 @@ function ColumnResizeHandle({ onDragStart }: { onDragStart: (e: ReactMouseEvent)
   )
 }
 
+const ReceiptAttachmentCell = memo(function ReceiptAttachmentCell({
+  transaction,
+  onChange,
+}: {
+  transaction: Transaction
+  onChange: (id: string, payload: { receiptImageDataUrl: string; receiptImageFileName: string } | null) => void
+}) {
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const { toast } = useToast()
+  const inputId = `receipt-file-${transaction.id}`
+
+  const hasAttachment = Boolean(transaction.receiptImageDataUrl?.trim())
+  const url = transaction.receiptImageDataUrl || ""
+  const isImage = url.startsWith("data:image")
+
+  const pickFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = ""
+    if (!f) return
+    const ok =
+      f.type.startsWith("image/") || f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+    if (!ok) {
+      toast({ title: "Unsupported file", description: "Use an image or PDF.", variant: "destructive" })
+      return
+    }
+    try {
+      const toRead = f.type.startsWith("image/") ? await compressImageIfNeeded(f) : f
+      const dataUrl = await readFileAsDataUrl(toRead)
+      onChange(transaction.id, { receiptImageDataUrl: dataUrl, receiptImageFileName: toRead.name })
+      toast({ title: "Receipt attached", description: toRead.name })
+    } catch {
+      toast({ title: "Could not read file", variant: "destructive" })
+    }
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {hasAttachment && isImage && (
+          <button
+            type="button"
+            onClick={() => setViewerOpen(true)}
+            className="shrink-0 rounded border overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <img src={url} alt="" className="w-11 h-11 object-cover" />
+          </button>
+        )}
+        {hasAttachment && !isImage && (
+          <Button type="button" variant="outline" size="sm" className="h-7 text-[10px]" onClick={() => setViewerOpen(true)}>
+            View PDF
+          </Button>
+        )}
+        <label htmlFor={inputId} className="text-[10px] text-primary cursor-pointer underline decoration-primary/60">
+          {hasAttachment ? "Replace" : "Attach receipt"}
+        </label>
+        <input id={inputId} type="file" accept="image/*,.pdf,application/pdf" className="sr-only" onChange={pickFile} />
+        {hasAttachment && (
+          <button
+            type="button"
+            className="text-[10px] text-destructive hover:underline"
+            onClick={() => onChange(transaction.id, null)}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
+        <DialogContent className="max-w-[min(95vw,56rem)] max-h-[90vh] overflow-hidden flex flex-col gap-2">
+          <DialogHeader>
+            <DialogTitle className="text-sm">{transaction.receiptImageFileName || "Receipt"}</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-auto max-h-[min(75vh,720px)] rounded border bg-muted/30">
+            {isImage ? (
+              <img src={url} alt="Receipt" className="max-w-full h-auto mx-auto" />
+            ) : (
+              <iframe
+                src={url}
+                className="w-full min-h-[560px] bg-white"
+                title={transaction.receiptImageFileName || "Receipt PDF"}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+})
+
 const TransactionTableRow = memo(function TransactionTableRow({
   transaction,
   gridTemplate,
@@ -193,6 +287,7 @@ const TransactionTableRow = memo(function TransactionTableRow({
   isSelected,
   onToggleSelect,
   onUpdate,
+  onReceiptAttachmentChange,
   accounts,
 }: {
   transaction: Transaction
@@ -201,6 +296,7 @@ const TransactionTableRow = memo(function TransactionTableRow({
   isSelected: boolean
   onToggleSelect: () => void
   onUpdate: (id: string, field: keyof Transaction, value: unknown) => void
+  onReceiptAttachmentChange: (id: string, payload: { receiptImageDataUrl: string; receiptImageFileName: string } | null) => void
   accounts: string[]
 }) {
   return (
@@ -230,9 +326,17 @@ const TransactionTableRow = memo(function TransactionTableRow({
             {transaction.merchantName}
           </Badge>
         )}
+        <span className="text-[10px] text-muted-foreground">Notes</span>
+        <EditableCell
+          value={transaction.notes || ""}
+          type="text"
+          noTruncate
+          onSave={(value) => onUpdate(transaction.id, "notes", value)}
+        />
+        <ReceiptAttachmentCell transaction={transaction} onChange={onReceiptAttachmentChange} />
       </div>
 
-      <div className="min-w-0 flex items-start pt-0.5">
+      <div className="min-w-0 flex flex-col gap-1 items-stretch pt-0.5">
         <div className={`font-semibold ${transaction.isIncome ? "text-green-600" : "text-red-600"}`}>
           {transaction.isIncome ? "+" : "-"}$
           <EditableCell
@@ -242,6 +346,19 @@ const TransactionTableRow = memo(function TransactionTableRow({
             className="inline"
           />
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 text-[10px] px-2 w-full max-w-[9rem]"
+          title="Flip whether this row counts as money in (+) or money out (−) for reports"
+          onClick={(e) => {
+            e.stopPropagation()
+            void onUpdate(transaction.id, "isIncome", !transaction.isIncome)
+          }}
+        >
+          {transaction.isIncome ? "Mark as expense (−)" : "Mark as income (+)"}
+        </Button>
       </div>
 
       <div className="min-w-0 flex flex-col gap-1">
@@ -308,6 +425,8 @@ export function InteractiveTransactionsList({
   const [manualAmount, setManualAmount] = useState("")
   const [manualCategory, setManualCategory] = useState("Phone & Internet Expense")
   const [manualIsIncome, setManualIsIncome] = useState(false)
+  const [manualNotes, setManualNotes] = useState("")
+  const [manualReceiptFile, setManualReceiptFile] = useState<File | null>(null)
   const [auditToolkitExpanded, setAuditToolkitExpanded] = useState(false)
   const { toast } = useToast()
 
@@ -315,6 +434,17 @@ export function InteractiveTransactionsList({
   const deferredSearch = useDeferredValue(searchTerm)
   const colWidthsRef = useRef(colWidths)
   colWidthsRef.current = colWidths
+
+  const manualReceiptPreviewUrl = useMemo(() => {
+    if (!manualReceiptFile || !manualReceiptFile.type.startsWith("image/")) return null
+    return URL.createObjectURL(manualReceiptFile)
+  }, [manualReceiptFile])
+
+  useEffect(() => {
+    return () => {
+      if (manualReceiptPreviewUrl) URL.revokeObjectURL(manualReceiptPreviewUrl)
+    }
+  }, [manualReceiptPreviewUrl])
 
   useEffect(() => {
     try {
@@ -388,6 +518,39 @@ export function InteractiveTransactionsList({
   const defaultAccount = accounts[0] || "Business Checking"
   const [manualAccount, setManualAccount] = useState(defaultAccount)
 
+  const businessAccounts = useMemo(
+    () =>
+      accounts.filter((a) => {
+        const x = a.toLowerCase()
+        return !x.includes("personal") && !x.includes("investment")
+      }),
+    [accounts],
+  )
+  const [businessTargetAccount, setBusinessTargetAccount] = useState("")
+
+  useEffect(() => {
+    if (businessAccounts.length === 0) return
+    try {
+      const s = localStorage.getItem("transactions.businessTargetAccount")
+      if (s && businessAccounts.includes(s)) {
+        setBusinessTargetAccount(s)
+        return
+      }
+    } catch {
+      // ignore
+    }
+    setBusinessTargetAccount((prev) => (prev && businessAccounts.includes(prev) ? prev : businessAccounts[0]))
+  }, [businessAccounts])
+
+  const persistBusinessTargetAccount = useCallback((v: string) => {
+    setBusinessTargetAccount(v)
+    try {
+      localStorage.setItem("transactions.businessTargetAccount", v)
+    } catch {
+      // ignore
+    }
+  }, [])
+
   const gridTemplate = useMemo(
     () =>
       `${colWidths.checkbox}px ${colWidths.date}px ${colWidths.description}px ${colWidths.amount}px ${colWidths.category}px ${colWidths.account}px`,
@@ -398,7 +561,7 @@ export function InteractiveTransactionsList({
   const rowVirtualizer = useVirtualizer({
     count: filteredTransactions.length,
     getScrollElement: () => scrollParentRef.current,
-    estimateSize: () => 104,
+    estimateSize: () => 200,
     overscan: 12,
   })
 
@@ -437,14 +600,39 @@ export function InteractiveTransactionsList({
     return years.sort((a, b) => b - a)[0]
   }, [transactions])
 
+  const phoneInternetHints = useMemo(
+    () => [
+      "cox",
+      "verizon",
+      "spectrum",
+      "xfinity",
+      "comcast",
+      "frontier",
+      "at&t",
+      "t-mobile",
+      "tmobile",
+      "sonic",
+      "google fiber",
+      "starlink",
+      "earthlink",
+      "optimum",
+      "centurylink",
+      "lumen",
+      "breezeline",
+      "mediacom",
+    ],
+    [],
+  )
+
   const phoneTransactions = useMemo(() => {
     return transactions.filter((t) => {
       const isYear = (t.date || "").startsWith(String(auditYear))
       if (!isYear) return false
       const dl = (t.description || "").toLowerCase()
-      return t.category === "Phone & Internet Expense" || dl.includes("cox") || dl.includes("verizon")
+      if (t.category === "Phone & Internet Expense") return true
+      return phoneInternetHints.some((h) => dl.includes(h))
     })
-  }, [transactions, auditYear])
+  }, [transactions, auditYear, phoneInternetHints])
 
   const missingPhoneMonths = useMemo(() => {
     const present = new Set(
@@ -516,6 +704,16 @@ export function InteractiveTransactionsList({
         return { is_personal, is_transfer }
       }
 
+      let receiptImageDataUrl: string | undefined
+      let receiptImageFileName: string | undefined
+      if (manualReceiptFile) {
+        const toRead = manualReceiptFile.type.startsWith("image/")
+          ? await compressImageIfNeeded(manualReceiptFile)
+          : manualReceiptFile
+        receiptImageDataUrl = await readFileAsDataUrl(toRead)
+        receiptImageFileName = toRead.name
+      }
+
       const { is_personal, is_transfer } = inferFlags(manualCategory)
       await onAddTransaction({
         date: manualDate,
@@ -524,14 +722,20 @@ export function InteractiveTransactionsList({
         category: manualCategory,
         account: manualAccount || defaultAccount,
         isIncome: manualIsIncome,
+        notes: manualNotes.trim(),
+        ...(receiptImageDataUrl
+          ? { receiptImageDataUrl, receiptImageFileName: receiptImageFileName ?? "receipt" }
+          : {}),
         is_personal,
         is_transfer,
         categorized_by: "user" as const,
         confidence: 1,
       })
-      toast({ title: "Manual transaction added", description: "You can now edit category/account as needed." })
+      toast({ title: "Manual transaction added", description: "You can edit category, notes, or attach a receipt on the row anytime." })
       setManualDescription("")
       setManualAmount("")
+      setManualNotes("")
+      setManualReceiptFile(null)
       setShowManualForm(false)
     } catch {
       toast({ title: "Error", description: "Failed to add manual transaction", variant: "destructive" })
@@ -598,6 +802,24 @@ export function InteractiveTransactionsList({
   const handleTransactionUpdate = useCallback(
     async (transactionId: string, field: keyof Transaction, value: unknown) => {
       try {
+        if (field === "isIncome") {
+          await onUpdateTransaction(transactionId, {
+            isIncome: Boolean(value),
+            categorized_by: "user",
+            confidence: 1,
+          })
+          return
+        }
+
+        if (field === "notes") {
+          await onUpdateTransaction(transactionId, {
+            notes: String(value ?? ""),
+            categorized_by: "user",
+            confidence: 1,
+          })
+          return
+        }
+
         const updates: Partial<Transaction> = { [field]: value } as Partial<Transaction>
 
         // Auto-detect income vs expense based on category
@@ -640,6 +862,18 @@ export function InteractiveTransactionsList({
     [onUpdateTransaction, toast],
   )
 
+  const handleReceiptAttachmentChange = useCallback(
+    async (id: string, payload: { receiptImageDataUrl: string; receiptImageFileName: string } | null) => {
+      await onUpdateTransaction(id, {
+        receiptImageDataUrl: payload?.receiptImageDataUrl ?? "",
+        receiptImageFileName: payload?.receiptImageFileName ?? "",
+        categorized_by: "user",
+        confidence: 1,
+      })
+    },
+    [onUpdateTransaction],
+  )
+
   const handleBulkCategoryUpdate = async (category: string) => {
     if (selectedTransactions.size === 0) return
 
@@ -660,9 +894,15 @@ export function InteractiveTransactionsList({
       id,
       updates: {
         category,
-        isIncome: ["Sales Revenue", "Freelance Income", "Interest Income", "Other Income", "Refunds Given", "Member Contribution - Ruben Ruiz"].includes(
-          category,
-        ),
+        isIncome: [
+          "Sales Revenue",
+          "Service Income",
+          "Freelance Income",
+          "Interest Income",
+          "Other Income",
+          "Refunds Given",
+          "Member Contribution - Ruben Ruiz",
+        ].includes(category),
         is_personal,
         is_transfer,
         categorized_by: "user" as const,
@@ -674,6 +914,34 @@ export function InteractiveTransactionsList({
     setSelectedTransactions(new Set())
     setBulkEditMode(false)
   }
+
+  const handleMoveSelectedToBusinessBooks = useCallback(async () => {
+    if (selectedTransactions.size === 0 || !businessTargetAccount) {
+      toast({
+        title: "Choose a business account",
+        description: "Select rows and pick which business account should own these transactions.",
+        variant: "destructive",
+      })
+      return
+    }
+    const updates = Array.from(selectedTransactions).map((id) => ({
+      id,
+      updates: {
+        account: businessTargetAccount,
+        is_personal: false,
+        is_transfer: false,
+        categorized_by: "user" as const,
+        confidence: 1,
+      },
+    }))
+    await onBulkUpdate(updates)
+    setSelectedTransactions(new Set())
+    setBulkEditMode(false)
+    toast({
+      title: "Moved to business books",
+      description: `${updates.length} transaction(s) assigned to ${businessTargetAccount} (not personal / not transfer). Set category if needed.`,
+    })
+  }, [selectedTransactions, businessTargetAccount, onBulkUpdate, toast])
 
   const toggleTransactionSelection = (transactionId: string) => {
     const newSelection = new Set(selectedTransactions)
@@ -695,7 +963,7 @@ export function InteractiveTransactionsList({
   }
 
   const exportToCSV = () => {
-    const headers = ["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type"]
+    const headers = ["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type", "Notes", "Receipt file"]
     const csvContent = [
       headers.join(","),
       ...filteredTransactions.map((t) =>
@@ -707,6 +975,8 @@ export function InteractiveTransactionsList({
           `"${t.category}"`,
           `"${t.account}"`,
           t.isIncome ? "Income" : "Expense",
+          `"${(t.notes || "").replace(/"/g, '""')}"`,
+          `"${(t.receiptImageFileName || "").replace(/"/g, '""')}"`,
         ].join(","),
       ),
     ].join("\n")
@@ -742,31 +1012,36 @@ export function InteractiveTransactionsList({
       doc.text(`Total Expenses: $${totalExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}`, 100, 28)
       doc.text(`Net: $${(totalIncome - totalExpenses).toLocaleString("en", { minimumFractionDigits: 2 })}`, 200, 28)
 
+      const trunc = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s)
       // Table
-      const tableRows = filteredTransactions.map(t => [
+      const tableRows = filteredTransactions.map((t) => [
         t.date,
-        t.description.length > 40 ? t.description.substring(0, 40) + "..." : t.description,
-        t.merchantName || "",
+        trunc(t.description, 36),
+        trunc(t.merchantName || "", 22),
         `$${t.amount.toLocaleString("en", { minimumFractionDigits: 2 })}`,
-        t.category,
-        t.account,
+        trunc(t.category, 26),
+        trunc(t.account, 18),
         t.isIncome ? "Income" : "Expense",
+        trunc(t.notes || "", 22),
+        t.receiptImageFileName ? trunc(t.receiptImageFileName, 14) : "",
       ])
 
       autoTable(doc, {
         startY: 33,
-        head: [["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type"]],
+        head: [["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type", "Notes", "Receipt"]],
         body: tableRows,
-        styles: { fontSize: 7, cellPadding: 1.5 },
-        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 7.5 },
+        styles: { fontSize: 6.5, cellPadding: 1.2 },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 7 },
         columnStyles: {
-          0: { cellWidth: 22 },
-          1: { cellWidth: 65 },
-          2: { cellWidth: 40 },
-          3: { cellWidth: 25, halign: "right" },
-          4: { cellWidth: 40 },
-          5: { cellWidth: 30 },
-          6: { cellWidth: 18 },
+          0: { cellWidth: 20 },
+          1: { cellWidth: 48 },
+          2: { cellWidth: 26 },
+          3: { cellWidth: 22, halign: "right" },
+          4: { cellWidth: 32 },
+          5: { cellWidth: 22 },
+          6: { cellWidth: 16 },
+          7: { cellWidth: 28 },
+          8: { cellWidth: 18 },
         },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         didParseCell: (data: any) => {
@@ -838,7 +1113,8 @@ export function InteractiveTransactionsList({
               )}
             </CardTitle>
             <CardDescription>
-              Click any cell to edit {"\u2022"} Select multiple for bulk actions ({filteredTransactions.length} transactions)
+              Click any cell to edit {"\u2022"} Add manual lines with optional notes and receipt image/PDF {"\u2022"} Select
+              multiple for bulk actions ({filteredTransactions.length} transactions)
             </CardDescription>
           </div>
           <div className="flex gap-2">
@@ -871,6 +1147,11 @@ export function InteractiveTransactionsList({
                 <p className="text-muted-foreground">
                   Phone/Internet in {auditYear}: {phoneTransactions.length} txn across {12 - missingPhoneMonths.length}/12 months
                   {missingPhoneMonths.length > 0 ? ` (missing ${missingPhoneMonths.length})` : ""}
+                </p>
+                <p className="text-xs text-muted-foreground pt-1">
+                  Transfers between your own accounts are usually categorized as Internal Transfer, Credit Card Payment, Zelle / Venmo
+                  Transfer, Member Drawing, Member Contribution, Owner Draw, or Brokerage Transfer (and marked as transfer in the sheet).
+                  Search those category names or descriptions like “online transfer,” “payment thank you,” or “zelle.”
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -948,38 +1229,112 @@ export function InteractiveTransactionsList({
           </div>
 
           {showManualForm && (
-            <div className="rounded-lg border p-3 grid grid-cols-1 md:grid-cols-6 gap-2">
-              <Input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} />
-              <Input
-                placeholder="Description (e.g. Verizon Wireless)"
-                value={manualDescription}
-                onChange={(e) => setManualDescription(e.target.value)}
-                className="md:col-span-2"
-              />
-              <Input type="number" step="0.01" placeholder="Amount" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} />
-              <Select value={manualCategory} onValueChange={(v) => { setManualCategory(v); setManualIsIncome(["Sales Revenue","Service Income","Freelance Income","Interest Income","Other Income","Refunds Given","Member Contribution - Ruben Ruiz"].includes(v)) }}>
-                <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((category) => (
-                    <SelectItem key={category} value={category}>{category}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={manualAccount || defaultAccount} onValueChange={setManualAccount}>
-                <SelectTrigger><SelectValue placeholder="Account" /></SelectTrigger>
-                <SelectContent>
-                  {accounts.length === 0 ? (
-                    <SelectItem value={defaultAccount}>{defaultAccount}</SelectItem>
-                  ) : (
-                    accounts.map((account) => (
-                      <SelectItem key={account} value={account}>{account}</SelectItem>
-                    ))
+            <div className="rounded-lg border p-3 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Type the transaction details below. You can attach a receipt image or PDF; it is saved with this business in your browser
+                (large libraries can fill storage—compress photos if needed).
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                <Input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} />
+                <Input
+                  placeholder="Description (e.g. Office Depot)"
+                  value={manualDescription}
+                  onChange={(e) => setManualDescription(e.target.value)}
+                  className="md:col-span-2"
+                />
+                <Input type="number" step="0.01" placeholder="Amount" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} />
+                <Select
+                  value={manualCategory}
+                  onValueChange={(v) => {
+                    setManualCategory(v)
+                    setManualIsIncome(
+                      [
+                        "Sales Revenue",
+                        "Service Income",
+                        "Freelance Income",
+                        "Interest Income",
+                        "Other Income",
+                        "Refunds Given",
+                        "Member Contribution - Ruben Ruiz",
+                      ].includes(v),
+                    )
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {CATEGORIES.map((category) => (
+                      <SelectItem key={category} value={category}>
+                        {category}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={manualAccount || defaultAccount} onValueChange={setManualAccount}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.length === 0 ? (
+                      <SelectItem value={defaultAccount}>{defaultAccount}</SelectItem>
+                    ) : (
+                      accounts.map((account) => (
+                        <SelectItem key={account} value={account}>
+                          {account}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-start">
+                <div className="md:col-span-4 flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Notes (optional)</span>
+                  <textarea
+                    value={manualNotes}
+                    onChange={(e) => setManualNotes(e.target.value)}
+                    placeholder="e.g. Q4 toner, client lunch with Jane"
+                    rows={3}
+                    className="flex min-h-[4.5rem] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                </div>
+                <div className="md:col-span-2 flex flex-col gap-2 rounded-md border border-dashed p-3">
+                  <span className="text-xs text-muted-foreground">Receipt image or PDF (optional)</span>
+                  {manualReceiptPreviewUrl ? (
+                    <img src={manualReceiptPreviewUrl} alt="" className="w-full max-h-32 object-contain rounded border bg-muted/40" />
+                  ) : manualReceiptFile ? (
+                    <span className="text-xs break-all">{manualReceiptFile.name}</span>
+                  ) : null}
+                  <label className="text-xs text-primary cursor-pointer underline w-fit">
+                    Choose file
+                    <input
+                      type="file"
+                      accept="image/*,.pdf,application/pdf"
+                      className="sr-only"
+                      onChange={(e) => setManualReceiptFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {manualReceiptFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs w-fit px-2"
+                      onClick={() => setManualReceiptFile(null)}
+                    >
+                      Clear file
+                    </Button>
                   )}
-                </SelectContent>
-              </Select>
-              <div className="md:col-span-6 flex justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setShowManualForm(false)}>Cancel</Button>
-                <Button size="sm" onClick={handleAddManualTransaction}>Save Manual Transaction</Button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setShowManualForm(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleAddManualTransaction}>
+                  Save transaction
+                </Button>
               </div>
             </div>
           )}
@@ -1079,9 +1434,9 @@ export function InteractiveTransactionsList({
 
           {/* Bulk Actions */}
           {selectedTransactions.size > 0 && (
-            <div className="flex items-center gap-4 p-3 bg-accent rounded-lg border">
+            <div className="flex flex-wrap items-center gap-4 p-3 bg-accent rounded-lg border">
               <span className="text-sm font-medium">{selectedTransactions.size} selected</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={selectAllVisible}>
                   Select All Visible
                 </Button>
@@ -1092,6 +1447,28 @@ export function InteractiveTransactionsList({
                   <Edit3 className="h-4 w-4 mr-2" />
                   Bulk Edit
                 </Button>
+                {businessAccounts.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-2 border-l pl-3 ml-1">
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">Business account</span>
+                      <Select value={businessTargetAccount} onValueChange={persistBusinessTargetAccount}>
+                        <SelectTrigger className="h-8 w-[min(220px,70vw)] text-xs">
+                          <SelectValue placeholder="Pick account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {businessAccounts.map((a) => (
+                            <SelectItem key={a} value={a}>
+                              {a}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button size="sm" variant="secondary" onClick={handleMoveSelectedToBusinessBooks}>
+                        Book on business
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1198,6 +1575,7 @@ export function InteractiveTransactionsList({
                             isSelected={selectedTransactions.has(transaction.id)}
                             onToggleSelect={() => toggleTransactionSelection(transaction.id)}
                             onUpdate={handleTransactionUpdate}
+                            onReceiptAttachmentChange={handleReceiptAttachmentChange}
                             accounts={accounts}
                           />
                         </div>

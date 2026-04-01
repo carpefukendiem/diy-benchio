@@ -58,6 +58,14 @@ const CAT = {
 }
 
 const KEYWORD_MAPPING_TABLE: KeywordRow[] = [
+  // GHL / Stripe agency billing — priority above generic "stripe" (85) so usage charges are not Merchant Fees
+  { pattern: "app.rankingsb.com", category_id: CAT.software, priority: 100 },
+  { pattern: "company-billing/billing", category_id: CAT.software, priority: 100 },
+  { pattern: "automated recharge", category_id: CAT.software, priority: 100 },
+  { pattern: "messaging credits", category_id: CAT.software, priority: 100 },
+  { pattern: "leadconnector", category_id: CAT.software, priority: 99 },
+  { pattern: "lead connector", category_id: CAT.software, priority: 99 },
+  { pattern: "gohighlevel.com", category_id: CAT.software, priority: 99 },
   // High-signal vendor keywords
   { pattern: "ghl", category_id: CAT.software, priority: 95 },
   { pattern: "gohighlevel", category_id: CAT.software, priority: 95 },
@@ -112,6 +120,8 @@ const KEYWORD_MAPPING_TABLE: KeywordRow[] = [
   { pattern: "postage", category_id: CAT.postage, priority: 70 },
 
   // Phone / internet and utilities
+  { pattern: "cox", category_id: CAT.phoneInternet, priority: 85 },
+  { pattern: "cox communications", category_id: CAT.phoneInternet, priority: 90 },
   { pattern: "verizon", category_id: CAT.phoneInternet, priority: 80 },
   { pattern: "at&t", category_id: CAT.phoneInternet, priority: 70 },
   { pattern: "t-mobile", category_id: CAT.phoneInternet, priority: 70 },

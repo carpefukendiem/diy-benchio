@@ -613,6 +613,7 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   // MORE SOFTWARE (0002-22) — catch common SaaS / tech patterns
   // ============================
+  { pattern: 'leadconnector', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.92 },
   { pattern: 'notion', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'figma', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
   { pattern: 'github', match: 'contains', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -866,7 +867,11 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'wire transfer', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.80 },
   { pattern: 'ach', match: 'contains', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true, confidence: 0.55 },
   { pattern: 'direct deposit', match: 'contains', category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.60 },
-  { pattern: 'deposit', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.50 },
+  // Do NOT use generic "deposit" — PDF headers like "Deposits/Additions" contain that substring and
+  // misclassify card charges (e.g. Prime) as Member Contribution. Use specific phrases only:
+  { pattern: 'mobile deposit', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.65 },
+  { pattern: 'check deposit', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.65 },
+  { pattern: 'branch deposit', match: 'contains', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true, confidence: 0.60 },
 ];
 
 // Smart fallback heuristic: if no exact rule matches, use description
@@ -914,6 +919,13 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'online transfer to ruiz r everyday checking', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
   { pattern: 'online transfer from ruiz r', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
   { pattern: 'chase credit crd', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+  // GoHighLevel / white-label (bank & Stripe text) — before generic "stripe" keyword → merchant fees
+  // Bench 2023 P&L: Software & Web Hosting Expense ~$16k for Ranking SB; GHL + usage must land here, not revenue.
+  { pattern: 'leadconnector', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'lead connector', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'gohighlevel.com', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'app.rankingsb.com', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'company-billing/billing', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // GHL / rankingsb — must beat generic "recurring payment" catch-all
   { pattern: 'ranking sb', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'rankingsb', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
@@ -1027,6 +1039,31 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'lemos feed', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'lemos pet', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
 ];
+
+/** Same high-priority pass as `categorizeByRules` — use in client `handleRecategorize` before keyword/built-in rules. */
+export function matchHighPriorityDescription(
+  descLower: string,
+  absAmount: number,
+): {
+  category_id: string
+  is_personal: boolean
+  is_transfer: boolean
+  confidence: number
+} | null {
+  for (const rule of HIGH_PRIORITY_PATTERNS) {
+    const matchesPattern = descLower.includes(rule.pattern)
+    const withinAmount = rule.amountMax == null || absAmount <= rule.amountMax
+    if (matchesPattern && withinAmount) {
+      return {
+        category_id: rule.category_id,
+        is_personal: rule.is_personal,
+        is_transfer: rule.is_transfer,
+        confidence: 0.99,
+      }
+    }
+  }
+  return null
+}
 
 export function categorizeByRules(
   transactions: ParsedTransaction[],

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Camera, Receipt, X, Loader2, CheckCircle, AlertTriangle, Sparkles } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { compressImageIfNeeded } from "@/lib/client/compress-image"
 
 export interface ReceiptData {
   id: string
@@ -59,52 +60,6 @@ async function readUploadErrorMessage(response: Response): Promise<string> {
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-  })
-}
-
-/** Shrink very large JPEG/PNG before upload (Vercel body limits). */
-async function compressImageIfNeeded(file: File, maxBytes = 3_500_000): Promise<File> {
-  if (file.size <= maxBytes || !file.type.startsWith("image/")) return file
-  return new Promise((resolve) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      const canvas = document.createElement("canvas")
-      let w = img.naturalWidth
-      let h = img.naturalHeight
-      const maxDim = 2200
-      if (w > maxDim || h > maxDim) {
-        const s = Math.min(maxDim / w, maxDim / h)
-        w = Math.round(w * s)
-        h = Math.round(h * s)
-      }
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext("2d")
-      if (!ctx) {
-        resolve(file)
-        return
-      }
-      ctx.drawImage(img, 0, 0, w, h)
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            resolve(file)
-            return
-          }
-          const out = new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" })
-          resolve(out.size < file.size ? out : file)
-        },
-        "image/jpeg",
-        0.82,
-      )
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      resolve(file)
-    }
-    img.src = url
   })
 }
 
