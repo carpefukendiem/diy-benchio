@@ -48,6 +48,21 @@ interface QueuedUploadFile {
   accountType: AccountType
 }
 
+type CachedStatementFile = {
+  id: string
+  fileName: string
+  fileType: string
+  fileSize: number
+  lastModified: number
+  accountName: string
+  accountType: AccountType
+  blob: Blob
+  addedAt: string
+}
+
+const CACHE_DB = "diy-benchio-statement-cache"
+const CACHE_STORE = "statementFiles"
+
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -80,6 +95,55 @@ function nextFrame(): Promise<void> {
   })
 }
 
+async function openCacheDb(): Promise<IDBDatabase> {
+  return await new Promise((resolve, reject) => {
+    const req = indexedDB.open(CACHE_DB, 1)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(CACHE_STORE)) {
+        db.createObjectStore(CACHE_STORE, { keyPath: "id" })
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function cacheStatementFile(file: File, accountName: string, accountType: AccountType) {
+  const db = await openCacheDb()
+  const id = `${accountName}|${file.name}|${file.size}|${file.lastModified}`
+  const payload: CachedStatementFile = {
+    id,
+    fileName: file.name,
+    fileType: file.type || "application/octet-stream",
+    fileSize: file.size,
+    lastModified: file.lastModified,
+    accountName,
+    accountType,
+    blob: file,
+    addedAt: new Date().toISOString(),
+  }
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(CACHE_STORE, "readwrite")
+    tx.objectStore(CACHE_STORE).put(payload)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+  db.close()
+}
+
+async function getCachedStatementFiles(): Promise<CachedStatementFile[]> {
+  const db = await openCacheDb()
+  const out = await new Promise<CachedStatementFile[]>((resolve, reject) => {
+    const tx = db.transaction(CACHE_STORE, "readonly")
+    const req = tx.objectStore(CACHE_STORE).getAll()
+    req.onsuccess = () => resolve((req.result || []) as CachedStatementFile[])
+    req.onerror = () => reject(req.error)
+  })
+  db.close()
+  return out
+}
+
 export function StatementUploader({ onStatementsUpdate, existingStatements, onContinue }: StatementUploaderProps) {
   const [accountName, setAccountName] = useState("")
   const [accountType, setAccountType] = useState<AccountType>("bank")
@@ -89,6 +153,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
   const [fileProgress, setFileProgress] = useState<FileProgress[]>([])
   const [allParsedTransactions, setAllParsedTransactions] = useState<any[]>([])
   const [queuedFiles, setQueuedFiles] = useState<QueuedUploadFile[]>([])
+  const [cachedFileCount, setCachedFileCount] = useState(0)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -96,6 +161,19 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     if (saved) {
       try { setSavedAccountNames(JSON.parse(saved)) } catch {}
     }
+  }, [])
+
+  const refreshCachedCount = async () => {
+    try {
+      const cached = await getCachedStatementFiles()
+      setCachedFileCount(cached.length)
+    } catch {
+      // ignore cache errors
+    }
+  }
+
+  useEffect(() => {
+    void refreshCachedCount()
   }, [])
 
   const saveAccountName = (name: string) => {
@@ -188,15 +266,16 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     setQueuedFiles(prev => prev.map(q => (q.id === id ? { ...q, ...updates } : q)))
   }
 
-  const startQueuedUpload = async () => {
-    if (queuedFiles.length === 0) return
-    if (queuedFiles.some(q => !q.accountName.trim())) {
+  const processQueuedUpload = async (filesToProcess: QueuedUploadFile[]) => {
+    if (filesToProcess.length === 0) return
+    if (filesToProcess.some(q => !q.accountName.trim())) {
       toast({ title: "Missing Account Name", description: "Each file must have an account name before upload.", variant: "destructive" })
       return
     }
 
     setIsUploading(true)
-    queuedFiles.forEach(q => saveAccountName(q.accountName))
+    filesToProcess.forEach(q => saveAccountName(q.accountName))
+    setFileProgress(filesToProcess.map(f => ({ fileName: f.file.name, status: "pending", transactionCount: 0 })))
 
     // =============================================
     // DUPLICATE TRANSACTION DEDUPLICATION (per-account)
@@ -208,10 +287,20 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
       })
     })
 
+    await Promise.all(
+      filesToProcess.map(async (q) => {
+        try {
+          await cacheStatementFile(q.file, q.accountName, q.accountType)
+        } catch {
+          // non-fatal: upload should still proceed
+        }
+      }),
+    )
+    await refreshCachedCount()
     await nextFrame()
 
     toast({
-      title: `Processing ${queuedFiles.length} file${queuedFiles.length === 1 ? "" : "s"}`,
+      title: `Processing ${filesToProcess.length} file${filesToProcess.length === 1 ? "" : "s"}`,
       description: "Uploading to the server (one file at a time). Keep this tab open.",
     })
 
@@ -220,10 +309,10 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     const fileErrors: { name: string; message: string }[] = []
 
     const accountTypeByAccount: Record<string, AccountType> = {}
-    queuedFiles.forEach(q => { accountTypeByAccount[q.accountName] = q.accountType })
+    filesToProcess.forEach(q => { accountTypeByAccount[q.accountName] = q.accountType })
 
-    for (let i = 0; i < queuedFiles.length; i++) {
-      const queued = queuedFiles[i]
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const queued = filesToProcess[i]
       const file = queued.file
       const fileAccountName = queued.accountName
       const fileAccountType = queued.accountType
@@ -353,6 +442,33 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
     }
   }
 
+  const startQueuedUpload = async () => {
+    await processQueuedUpload(queuedFiles)
+  }
+
+  const handleReparseCachedFiles = async () => {
+    try {
+      const cached = await getCachedStatementFiles()
+      if (cached.length === 0) {
+        toast({ title: "No cached files", description: "Upload statements first so they can be re-parsed later." })
+        return
+      }
+      const filesToProcess: QueuedUploadFile[] = cached.map((c, idx) => ({
+        id: `cached-${idx}-${c.id}`,
+        file: new File([c.blob], c.fileName, { type: c.fileType, lastModified: c.lastModified }),
+        accountName: c.accountName,
+        accountType: c.accountType,
+      }))
+      toast({
+        title: "Re-running parser",
+        description: `Queued ${filesToProcess.length} cached file(s) for re-import.`,
+      })
+      await processQueuedUpload(filesToProcess)
+    } catch {
+      toast({ title: "Cache read failed", description: "Could not load cached files for re-parse.", variant: "destructive" })
+    }
+  }
+
   const autoTagForAccountType = (txns: any[], accountTypeByAccount: Record<string, AccountType>) => {
     return txns.map((t) => {
       const type = accountTypeByAccount[t.account] || "bank"
@@ -458,6 +574,12 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
               <Upload className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
               <Input type="file" accept=".pdf,.csv" multiple onChange={handleFileUpload} disabled={isUploading} className="cursor-pointer" />
               <p className="mt-3 text-sm text-muted-foreground">Select all 12 months at once (Cmd+A). PDF or CSV.</p>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">{cachedFileCount} cached statement file(s) available for parser re-run</p>
+              <Button size="sm" variant="secondary" onClick={handleReparseCachedFiles} disabled={isUploading || cachedFileCount === 0}>
+                Re-run parser on cached files
+              </Button>
             </div>
 
             {queuedFiles.length > 0 && !isUploading && (
