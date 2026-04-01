@@ -34,7 +34,9 @@ export function TransactionsList({ transactions, onRefresh, isLoading }: Transac
     return matchesSearch && matchesCategory
   })
 
-  const categories = Array.from(new Set(transactions.map((t) => t.category)))
+  const categories = Array.from(new Set(transactions.map((t) => t.category))).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  )
 
   const exportToCSV = () => {
     const headers = ["Date", "Description", "Amount", "Category", "Account", "Type"]

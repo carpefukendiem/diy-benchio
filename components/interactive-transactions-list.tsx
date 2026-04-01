@@ -152,7 +152,7 @@ export const CATEGORIES = [
   "Personal - Food & Drink",
   "Personal - Health",
   "Crypto / Investments",
-]
+].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
 
 const TX_TABLE_COL_WIDTHS_KEY = "diy-benchio.txTable.colWidths"
 

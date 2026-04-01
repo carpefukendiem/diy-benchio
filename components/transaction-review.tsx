@@ -99,7 +99,7 @@ const CATEGORIES = [
   "ATM Withdrawal",
   "Crypto / Investments",
   "Uncategorized Expense",
-]
+].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
 
 export function TransactionReview({
   transactions: initialTransactions,
