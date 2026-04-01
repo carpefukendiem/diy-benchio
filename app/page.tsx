@@ -437,6 +437,8 @@ export default function CaliforniaBusinessAccounting() {
         }
       }
 
+      const isUpworkLike = dl.includes("upwork") || dl.includes("upwk")
+
       // Skip user-categorized transactions unless forceAll (don't override manual edits).
       // Rule/AI-tagged rows may be re-processed so improved patterns (e.g. GHL / messaging credits) can fix Sales Revenue.
       if (
@@ -446,11 +448,17 @@ export default function CaliforniaBusinessAccounting() {
         t.category !== "Uncategorized Expense" &&
         t.category !== ""
       ) {
-        if (dl.includes("upwork") && !t.isIncome) {
+        if (isUpworkLike && t.category !== "Freelance Income") {
           updated++
           return { ...t, category: "Freelance Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.9 }
         }
         return t
+      }
+
+      // Upwork should consistently land in Freelance Income (not generic Sales Revenue).
+      if (isUpworkLike && t.category !== "Freelance Income") {
+        updated++
+        return { ...t, category: "Freelance Income", isIncome: true, is_personal: false, is_transfer: false, categorized_by: "rule", confidence: 0.95 }
       }
       
       // Keyword mapping layer (customRules) — applied before built-in rules
