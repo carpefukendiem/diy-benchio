@@ -288,6 +288,23 @@ export default function CaliforniaBusinessAccounting() {
     setForceAllUndoState(null)
   }, [currentBusinessId])
 
+  const removeTransactions = useCallback(async (ids: string[]) => {
+    if (!ids || ids.length === 0) return
+    const idSet = new Set(ids)
+    setBusinesses((prev) =>
+      prev.map((b) =>
+        b.id === currentBusinessId
+          ? {
+              ...b,
+              transactions: b.transactions.filter((t) => !idSet.has(t.id)),
+            }
+          : b,
+      ),
+    )
+    setHighlightedTransactionIds([])
+    setForceAllUndoState(null)
+  }, [currentBusinessId])
+
   const addManualTransaction = useCallback(async (txn: NewTransactionInput) => {
     const manualId = `manual-${Date.now()}-${Math.floor(Math.random() * 100000)}`
     setBusinesses((prev) =>
@@ -957,6 +974,7 @@ export default function CaliforniaBusinessAccounting() {
                     transactions={currentBusiness.transactions}
                     onUpdateTransaction={updateTransaction}
                     onBulkUpdate={bulkUpdateTransactions}
+                    onRemoveTransactions={removeTransactions}
                     onAddTransaction={addManualTransaction}
                     onRefresh={() => {}}
                     isLoading={isLoading}

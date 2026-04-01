@@ -48,6 +48,7 @@ interface InteractiveTransactionsListProps {
   transactions: Transaction[]
   onUpdateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>
   onBulkUpdate: (updates: Array<{ id: string; updates: Partial<Transaction> }>) => Promise<void>
+  onRemoveTransactions: (ids: string[]) => Promise<void>
   onAddTransaction: (transaction: Omit<Transaction, "id">) => Promise<void>
   onRefresh: () => void
   isLoading: boolean
@@ -402,6 +403,7 @@ export function InteractiveTransactionsList({
   transactions,
   onUpdateTransaction,
   onBulkUpdate,
+  onRemoveTransactions,
   onAddTransaction,
   onRefresh,
   isLoading,
@@ -571,6 +573,10 @@ export function InteractiveTransactionsList({
   const visibleEnd = filteredTransactions.length === 0 ? 0 : Math.min(lastVisibleIndex + 1, filteredTransactions.length)
   const scrollProgressPct =
     filteredTransactions.length <= 1 ? 0 : Math.round((firstVisibleIndex / (filteredTransactions.length - 1)) * 100)
+  const filteredNetSum = useMemo(
+    () => filteredTransactions.reduce((sum, t) => sum + (t.isIncome ? t.amount : -t.amount), 0),
+    [filteredTransactions],
+  )
 
   const persistColWidths = useCallback((w: TxColWidths) => {
     try {
@@ -673,6 +679,47 @@ export function InteractiveTransactionsList({
       .filter((g) => g.length > 1)
       .sort((a, b) => b.length - a.length)
   }, [transactions, auditToolkitExpanded])
+
+  const handleRemoveDuplicateTransactions = useCallback(async () => {
+    if (transactions.length === 0) return
+
+    const groups = new Map<string, Transaction[]>()
+    for (const t of transactions) {
+      const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
+      const key = `${t.date}|${Number(t.amount).toFixed(2)}|${merchantish}`
+      const arr = groups.get(key) || []
+      arr.push(t)
+      groups.set(key, arr)
+    }
+    const duplicateSets = Array.from(groups.values()).filter((g) => g.length > 1)
+    if (duplicateSets.length === 0) {
+      toast({ title: "No duplicates found", description: "Every transaction appears unique by date + amount + description." })
+      return
+    }
+
+    const score = (t: Transaction): number => {
+      const account = (t.account || "").toLowerCase()
+      const accountScore = account.includes("personal") ? -3 : 3
+      const provenanceScore = t.categorized_by === "user" ? 4 : t.categorized_by === "ai" ? 2 : t.categorized_by === "rule" ? 1 : 0
+      const confidenceScore = Math.round((t.confidence ?? 0) * 10)
+      const attachmentScore = t.receiptImageDataUrl ? 2 : 0
+      const notesScore = t.notes?.trim() ? 1 : 0
+      return accountScore + provenanceScore + confidenceScore + attachmentScore + notesScore
+    }
+
+    const toRemove: string[] = []
+    for (const set of duplicateSets) {
+      const sorted = [...set].sort((a, b) => score(b) - score(a))
+      toRemove.push(...sorted.slice(1).map((t) => t.id))
+    }
+    if (toRemove.length === 0) return
+
+    await onRemoveTransactions(toRemove)
+    toast({
+      title: "Duplicates removed",
+      description: `Removed ${toRemove.length} duplicate row(s) across ${duplicateSets.length} duplicate set(s).`,
+    })
+  }, [transactions, onRemoveTransactions, toast])
 
   const recurringCoverage = useMemo(() => {
     if (!auditToolkitExpanded) return { count: 0, coveredMonths: 0, missingMonths: [] as number[] }
@@ -1222,7 +1269,13 @@ export function InteractiveTransactionsList({
                   {duplicateGroups.length === 0 ? (
                     <p className="text-xs text-muted-foreground">No obvious duplicates by date + amount + merchant/description.</p>
                   ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
+                      <Button size="sm" variant="secondary" onClick={handleRemoveDuplicateTransactions}>
+                        Remove duplicate rows (full ledger)
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground">
+                        Keeps the strongest row per duplicate set (prefers business account + manual edits + receipts/notes).
+                      </p>
                       {duplicateGroups.slice(0, 5).map((group, idx) => (
                         <p key={idx} className="text-xs text-muted-foreground">
                           {group.length}x — {group[0].date} — ${group[0].amount.toFixed(2)} — {(group[0].merchantName || group[0].description).slice(0, 80)}
@@ -1510,10 +1563,15 @@ export function InteractiveTransactionsList({
 
         {/* Transactions Table — resizable columns + virtualized rows */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              Viewing rows {visibleStart}-{visibleEnd} of {filteredTransactions.length}
-            </span>
+          <div className="flex items-center justify-between text-xs text-muted-foreground gap-2">
+            <div className="flex items-center gap-3">
+              <span className={filteredNetSum >= 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}>
+                Sum All (net): ${filteredNetSum.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span>
+                Viewing rows {visibleStart}-{visibleEnd} of {filteredTransactions.length}
+              </span>
+            </div>
             <span>{scrollProgressPct}% from top</span>
           </div>
           <div className="overflow-x-auto rounded-lg border bg-muted/30">
