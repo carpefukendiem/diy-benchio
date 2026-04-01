@@ -95,7 +95,13 @@ const KEYWORD_MAPPING_TABLE: KeywordRow[] = [
   { pattern: "loom", category_id: CAT.software, priority: 50 },
 
   // Merchant processing / fees
-  { pattern: "stripe", category_id: CAT.merchantFees, priority: 85 },
+  // Keep Stripe fee detection specific so payouts/revenue lines don't get misclassified as fees.
+  { pattern: "stripe fee", category_id: CAT.merchantFees, priority: 96 },
+  { pattern: "processing fee", category_id: CAT.merchantFees, priority: 94 },
+  { pattern: "application fee", category_id: CAT.merchantFees, priority: 92 },
+  { pattern: "instant payout fee", category_id: CAT.merchantFees, priority: 92 },
+  { pattern: "payout fee", category_id: CAT.merchantFees, priority: 90 },
+  { pattern: "fee reversal", category_id: CAT.merchantFees, priority: 86 },
   { pattern: "paypal", category_id: CAT.merchantFees, priority: 80 },
   { pattern: "square", category_id: CAT.merchantFees, priority: 65 },
   { pattern: "merchant fee", category_id: CAT.merchantFees, priority: 75 },

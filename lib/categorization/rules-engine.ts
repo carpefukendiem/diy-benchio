@@ -906,6 +906,11 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   amountMax?: number;
 }> = [
   // --- Income (Schedule C Line 1) ---
+  // Fees must win before generic Stripe transfer/payout income patterns.
+  { pattern: 'stripe fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
+  { pattern: 'processing fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
+  { pattern: 'application fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
+  { pattern: 'instant payout fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
   { pattern: 'stripe transfer', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'stripe payout', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'upwork escrow', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
