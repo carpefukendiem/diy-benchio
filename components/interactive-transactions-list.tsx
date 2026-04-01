@@ -670,6 +670,22 @@ export function InteractiveTransactionsList({
     })
   }, [transactions])
 
+  const upworkAudit = useMemo(() => {
+    const candidates = transactions.filter((t) => {
+      const text = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase().replace(/\s+/g, " ")
+      const explicitUpwork = text.includes("upwork") || text.includes("upwk") || text.includes("from upwork ca")
+      const transferPhrase = text.includes("money transfer authorized")
+      const likelyUpworkTransfer = transferPhrase && text.includes("from upwork")
+      return explicitUpwork || likelyUpworkTransfer
+    })
+    const totalAmount = candidates.reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0)
+    const miscategorized = candidates.filter(
+      (t) => t.category !== "Freelance Income" || t.isIncome !== true || t.is_personal === true || t.is_transfer === true,
+    )
+    const miscategorizedAmount = miscategorized.reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0)
+    return { candidates, totalAmount, miscategorized, miscategorizedAmount }
+  }, [transactions])
+
   const allDuplicateGroups = useMemo(() => {
     const groups = new Map<string, Transaction[]>()
     for (const t of transactions) {
@@ -818,6 +834,32 @@ export function InteractiveTransactionsList({
     toast({
       title: "Crypto exchange transactions updated",
       description: `${updates.length} transaction${updates.length === 1 ? "" : "s"} marked as personal/excluded.`,
+    })
+  }
+
+  const handleFixUpworkPayouts = async () => {
+    if (upworkAudit.miscategorized.length === 0) {
+      toast({
+        title: "Upwork payouts already clean",
+        description: `Audited ${upworkAudit.candidates.length} candidate payout(s).`,
+      })
+      return
+    }
+    const updates = upworkAudit.miscategorized.map((t) => ({
+      id: t.id,
+      updates: {
+        category: "Freelance Income",
+        isIncome: true,
+        is_personal: false,
+        is_transfer: false,
+        categorized_by: "rule" as const,
+        confidence: 0.99,
+      },
+    }))
+    await onBulkUpdate(updates)
+    toast({
+      title: "Upwork payouts fixed",
+      description: `${updates.length} transaction(s) moved to Freelance Income.`,
     })
   }
 
@@ -1227,12 +1269,27 @@ export function InteractiveTransactionsList({
                   {missingPhoneMonths.length > 0 ? ` (missing ${missingPhoneMonths.length})` : ""}
                 </p>
                 <p className="text-xs text-muted-foreground pt-1">
+                  Upwork audit: {upworkAudit.candidates.length} candidate payout(s), total $
+                  {upworkAudit.totalAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {upworkAudit.miscategorized.length > 0
+                    ? ` • ${upworkAudit.miscategorized.length} miscategorized ($${upworkAudit.miscategorizedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                    : " • all categorized as Freelance Income"}
+                </p>
+                <p className="text-xs text-muted-foreground pt-1">
                   Transfers between your own accounts are usually categorized as Internal Transfer, Credit Card Payment, Zelle / Venmo
                   Transfer, Member Drawing, Member Contribution, Owner Draw, or Brokerage Transfer (and marked as transfer in the sheet).
                   Search those category names or descriptions like “online transfer,” “payment thank you,” or “zelle.”
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleFixUpworkPayouts}
+                  disabled={upworkAudit.miscategorized.length === 0}
+                >
+                  Fix Upwork payouts
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowManualForm((v) => !v)}>
                   {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
                 </Button>

@@ -140,7 +140,9 @@ function parseWFPDFText(text: string) {
   for (const rawLine of lines) {
     const line = rawLine.trimEnd()
     // New transaction: line starts with M/D date pattern
-    const dateM = line.match(/^(\d{1,2})\/(\d{1,2})\s{1,5}(.*)/)
+    // Wells Fargo exports are inconsistent: separator after date can be tabs, many spaces,
+    // or OCR-expanded whitespace. Accept any whitespace width.
+    const dateM = line.match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s+(.*)/)
     if (dateM) {
       flushCurrent()
       const mo = dateM[1].padStart(2, "0")
