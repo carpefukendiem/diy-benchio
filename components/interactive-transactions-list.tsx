@@ -564,6 +564,13 @@ export function InteractiveTransactionsList({
     estimateSize: () => 200,
     overscan: 12,
   })
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const firstVisibleIndex = virtualItems[0]?.index ?? 0
+  const lastVisibleIndex = virtualItems[virtualItems.length - 1]?.index ?? 0
+  const visibleStart = filteredTransactions.length === 0 ? 0 : firstVisibleIndex + 1
+  const visibleEnd = filteredTransactions.length === 0 ? 0 : Math.min(lastVisibleIndex + 1, filteredTransactions.length)
+  const scrollProgressPct =
+    filteredTransactions.length <= 1 ? 0 : Math.round((firstVisibleIndex / (filteredTransactions.length - 1)) * 100)
 
   const persistColWidths = useCallback((w: TxColWidths) => {
     try {
@@ -1503,6 +1510,12 @@ export function InteractiveTransactionsList({
 
         {/* Transactions Table — resizable columns + virtualized rows */}
         <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              Viewing rows {visibleStart}-{visibleEnd} of {filteredTransactions.length}
+            </span>
+            <span>{scrollProgressPct}% from top</span>
+          </div>
           <div className="overflow-x-auto rounded-lg border bg-muted/30">
             <div
               className="min-w-full"
@@ -1555,7 +1568,7 @@ export function InteractiveTransactionsList({
                     className="relative w-full"
                     style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                   >
-                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                    {virtualItems.map((virtualRow) => {
                       const transaction = filteredTransactions[virtualRow.index]
                       return (
                         <div
