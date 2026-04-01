@@ -416,7 +416,7 @@ export default function CaliforniaBusinessAccounting() {
     let updated = 0
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const newTransactions = currentBusiness.transactions.map(t => {
-      const dl = t.description.toLowerCase()
+      const dl = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase()
       const absAmt = Math.abs(t.amount || 0)
 
       // Align with server rules engine: high-priority patterns first (Prime Video, crypto, DLR, etc.)
