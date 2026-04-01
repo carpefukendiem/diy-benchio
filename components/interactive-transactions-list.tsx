@@ -420,6 +420,7 @@ export function InteractiveTransactionsList({
   const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set())
   const [bulkEditMode, setBulkEditMode] = useState(false)
   const [bulkCategory, setBulkCategory] = useState("Phone & Internet Expense")
+  const [bulkAccount, setBulkAccount] = useState("")
   const [colWidths, setColWidths] = useState<TxColWidths>(DEFAULT_TX_COL_WIDTHS)
   const [showManualForm, setShowManualForm] = useState(false)
   const [manualDate, setManualDate] = useState(new Date().toISOString().split("T")[0])
@@ -519,6 +520,10 @@ export function InteractiveTransactionsList({
   const accounts = useMemo(() => Array.from(new Set(transactions.map((t) => t.account))), [transactions])
   const defaultAccount = accounts[0] || "Business Checking"
   const [manualAccount, setManualAccount] = useState(defaultAccount)
+  useEffect(() => {
+    if (accounts.length === 0) return
+    setBulkAccount((prev) => (prev && accounts.includes(prev) ? prev : accounts[0]))
+  }, [accounts])
 
   const businessAccounts = useMemo(
     () =>
@@ -665,8 +670,7 @@ export function InteractiveTransactionsList({
     })
   }, [transactions])
 
-  const duplicateGroups = useMemo(() => {
-    if (!auditToolkitExpanded) return []
+  const allDuplicateGroups = useMemo(() => {
     const groups = new Map<string, Transaction[]>()
     for (const t of transactions) {
       const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
@@ -678,7 +682,8 @@ export function InteractiveTransactionsList({
     return Array.from(groups.values())
       .filter((g) => g.length > 1)
       .sort((a, b) => b.length - a.length)
-  }, [transactions, auditToolkitExpanded])
+  }, [transactions])
+  const duplicateGroups = useMemo(() => (auditToolkitExpanded ? allDuplicateGroups : []), [allDuplicateGroups, auditToolkitExpanded])
 
   const handleRemoveDuplicateTransactions = useCallback(async () => {
     if (transactions.length === 0) return
@@ -967,6 +972,25 @@ export function InteractiveTransactionsList({
     await onBulkUpdate(updates)
     setSelectedTransactions(new Set())
     setBulkEditMode(false)
+  }
+
+  const handleBulkAccountUpdate = async (account: string) => {
+    if (selectedTransactions.size === 0 || !account) return
+    const updates = Array.from(selectedTransactions).map((id) => ({
+      id,
+      updates: {
+        account,
+        categorized_by: "user" as const,
+        confidence: 1,
+      },
+    }))
+    await onBulkUpdate(updates)
+    setSelectedTransactions(new Set())
+    setBulkEditMode(false)
+    toast({
+      title: "Account updated",
+      description: `${updates.length} transaction(s) moved to ${account}.`,
+    })
   }
 
   const handleMoveSelectedToBusinessBooks = useCallback(async () => {
@@ -1491,6 +1515,16 @@ export function InteractiveTransactionsList({
               <span className="ml-2 text-amber-700 dark:text-amber-300">Updating search…</span>
             ) : null}
           </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handleRemoveDuplicateTransactions}>
+              Remove duplicates (full ledger)
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {allDuplicateGroups.length > 0
+                ? `${allDuplicateGroups.length} duplicate set(s) detected`
+                : "No duplicate sets detected"}
+            </span>
+          </div>
 
           {/* Bulk Actions */}
           {selectedTransactions.size > 0 && (
@@ -1535,26 +1569,50 @@ export function InteractiveTransactionsList({
 
           {/* Bulk Edit Panel */}
           {bulkEditMode && selectedTransactions.size > 0 && (
-            <div className="p-4 bg-muted rounded-lg border">
-              <h4 className="font-medium mb-3">Bulk update category</h4>
-              <div className="flex flex-wrap items-end gap-2">
+            <div className="p-4 bg-muted rounded-lg border space-y-4">
+              <div>
+                <h4 className="font-medium mb-3">Bulk update category</h4>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">
+                    <span className="text-xs text-muted-foreground">Category</span>
+                    <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                      <SelectTrigger className="min-h-10 h-auto text-xs text-left [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:break-words">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button size="sm" onClick={() => handleBulkCategoryUpdate(bulkCategory)}>
+                    Apply to {selectedTransactions.size} selected
+                  </Button>
+                </div>
+              </div>
+
+              <div className="border-t pt-3">
+                <h4 className="font-medium mb-3">Bulk move account</h4>
                 <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">
-                  <span className="text-xs text-muted-foreground">Category</span>
-                  <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                  <span className="text-xs text-muted-foreground">Account</span>
+                  <Select value={bulkAccount} onValueChange={setBulkAccount}>
                     <SelectTrigger className="min-h-10 h-auto text-xs text-left [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:break-words">
-                      <SelectValue />
+                      <SelectValue placeholder="Pick account" />
                     </SelectTrigger>
                     <SelectContent className="max-h-72">
-                      {CATEGORIES.map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category}
+                      {accounts.map((account) => (
+                        <SelectItem key={account} value={account}>
+                          {account}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <Button size="sm" onClick={() => handleBulkCategoryUpdate(bulkCategory)}>
-                  Apply to {selectedTransactions.size} selected
+                <Button size="sm" variant="secondary" className="mt-2" onClick={() => handleBulkAccountUpdate(bulkAccount)}>
+                  Move {selectedTransactions.size} selected to account
                 </Button>
               </div>
             </div>
