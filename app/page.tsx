@@ -57,6 +57,8 @@ interface Transaction {
   isIncome: boolean
   merchantName?: string
   pending?: boolean
+  /** True for rows created via Manual Entry (not from statement import) */
+  manual_entry?: boolean
   /** Optional memo (manual entry, receipt context) */
   notes?: string
   /** Data URL for an attached receipt image or PDF (stored with the business in localStorage) */
@@ -75,7 +77,7 @@ type NewTransactionInput = Omit<Transaction, "id">
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card" | "personal" | "investment"
+  accountType: "bank" | "credit_card" | "personal" | "investment" | "wf_business_csv"
   month: string
   year: string
   fileName: string
@@ -372,7 +374,7 @@ export default function CaliforniaBusinessAccounting() {
     setBusinesses((prev) =>
       prev.map((b) =>
         b.id === currentBusinessId
-          ? { ...b, transactions: [{ ...txn, id: manualId }, ...b.transactions] }
+          ? { ...b, transactions: [{ ...txn, id: manualId, manual_entry: true }, ...b.transactions] }
           : b
       )
     )
@@ -436,7 +438,8 @@ export default function CaliforniaBusinessAccounting() {
       }
 
       // Align with server rules engine: high-priority patterns first (Prime Video, crypto, DLR, etc.)
-      const hp = matchHighPriorityDescription(dl, absAmt)
+      const combinedDesc = `${t.description || ""} ${t.merchantName || ""}`.replace(/\s+/g, " ").trim()
+      const hp = matchHighPriorityDescription(combinedDesc, absAmt)
       if (hp && (forceAll || t.categorized_by !== "user")) {
         const catInfo = CATEGORY_ID_TO_NAME[hp.category_id]
         if (catInfo) {

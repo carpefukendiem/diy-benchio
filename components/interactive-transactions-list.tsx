@@ -18,10 +18,12 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Label } from "@/components/ui/label"
 import { EditableCell } from "@/components/editable-cell"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { compressImageIfNeeded, readFileAsDataUrl } from "@/lib/client/compress-image"
-import { RefreshCw, Search, Download, Edit3, FileText } from "lucide-react"
+import { RefreshCw, Search, Download, Edit3, FileText, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 interface Transaction {
@@ -42,6 +44,7 @@ interface Transaction {
   plaidTransactionId?: string
   merchantName?: string
   pending?: boolean
+  manual_entry?: boolean
 }
 
 interface InteractiveTransactionsListProps {
@@ -290,6 +293,7 @@ const TransactionTableRow = memo(function TransactionTableRow({
   onUpdate,
   onReceiptAttachmentChange,
   accounts,
+  onDelete,
 }: {
   transaction: Transaction
   gridTemplate: string
@@ -299,7 +303,14 @@ const TransactionTableRow = memo(function TransactionTableRow({
   onUpdate: (id: string, field: keyof Transaction, value: unknown) => void
   onReceiptAttachmentChange: (id: string, payload: { receiptImageDataUrl: string; receiptImageFileName: string } | null) => void
   accounts: string[]
+  onDelete?: () => void
 }) {
+  const isManualRow = Boolean(transaction.manual_entry || transaction.id.startsWith("manual-"))
+  const accountOptions = useMemo(() => {
+    const set = new Set(accounts)
+    if (transaction.account) set.add(transaction.account)
+    return Array.from(set)
+  }, [accounts, transaction.account])
   return (
     <div
       className={`gap-2 p-3 border rounded-lg hover:bg-muted transition-colors ${
@@ -322,11 +333,18 @@ const TransactionTableRow = memo(function TransactionTableRow({
           noTruncate
           onSave={(value) => onUpdate(transaction.id, "description", value)}
         />
-        {transaction.merchantName && (
-          <Badge variant="outline" className="text-xs w-fit max-w-full whitespace-normal break-words">
-            {transaction.merchantName}
-          </Badge>
-        )}
+        <div className="flex flex-wrap gap-1">
+          {isManualRow && (
+            <Badge variant="secondary" className="text-[10px] w-fit">
+              Manual Entry
+            </Badge>
+          )}
+          {transaction.merchantName && (
+            <Badge variant="outline" className="text-xs w-fit max-w-full whitespace-normal break-words">
+              {transaction.merchantName}
+            </Badge>
+          )}
+        </div>
         <span className="text-[10px] text-muted-foreground">Notes</span>
         <EditableCell
           value={transaction.notes || ""}
@@ -335,6 +353,21 @@ const TransactionTableRow = memo(function TransactionTableRow({
           onSave={(value) => onUpdate(transaction.id, "notes", value)}
         />
         <ReceiptAttachmentCell transaction={transaction} onChange={onReceiptAttachmentChange} />
+        {onDelete && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-destructive hover:text-destructive gap-1 w-fit"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </Button>
+        )}
       </div>
 
       <div className="min-w-0 flex flex-col gap-1 items-stretch pt-0.5">
@@ -386,14 +419,23 @@ const TransactionTableRow = memo(function TransactionTableRow({
       </div>
 
       <div className="min-w-0 flex items-start pt-0.5">
-        <EditableCell
-          value={transaction.account}
-          type="select"
-          options={accounts}
-          noTruncate
-          selectTriggerClassName="max-w-full"
-          onSave={(value) => onUpdate(transaction.id, "account", value)}
-        />
+        {isManualRow ? (
+          <EditableCell
+            value={transaction.account}
+            type="text"
+            noTruncate
+            onSave={(value) => onUpdate(transaction.id, "account", value)}
+          />
+        ) : (
+          <EditableCell
+            value={transaction.account}
+            type="select"
+            options={accountOptions}
+            noTruncate
+            selectTriggerClassName="max-w-full"
+            onSave={(value) => onUpdate(transaction.id, "account", value)}
+          />
+        )}
       </div>
     </div>
   )
@@ -414,6 +456,7 @@ export function InteractiveTransactionsList({
   const [accountFilter, setAccountFilter] = useState("all")
   const [sortBy, setSortBy] = useState<"category" | "date_desc" | "date_asc" | "amount_desc" | "amount_asc" | "description">("category")
   const [showChangedOnly, setShowChangedOnly] = useState(false)
+  const [txViewTab, setTxViewTab] = useState<"all" | "manual">("all")
   const [savedViews, setSavedViews] = useState<SavedAuditView[]>([])
   const [newViewName, setNewViewName] = useState("")
   const [recurringCategory, setRecurringCategory] = useState("Phone & Internet Expense")
@@ -427,7 +470,11 @@ export function InteractiveTransactionsList({
   const [manualDescription, setManualDescription] = useState("")
   const [manualAmount, setManualAmount] = useState("")
   const [manualCategory, setManualCategory] = useState("Phone & Internet Expense")
+  const [manualEntryType, setManualEntryType] = useState<"income" | "business_expense" | "personal" | "transfer">(
+    "business_expense",
+  )
   const [manualIsIncome, setManualIsIncome] = useState(false)
+  const [manualAccountText, setManualAccountText] = useState("")
   const [manualNotes, setManualNotes] = useState("")
   const [manualReceiptFile, setManualReceiptFile] = useState<File | null>(null)
   const [auditToolkitExpanded, setAuditToolkitExpanded] = useState(false)
@@ -481,7 +528,11 @@ export function InteractiveTransactionsList({
   }
 
   const filteredTransactions = useMemo(() => {
-    const filtered = transactions.filter((transaction) => {
+    const ledger =
+      txViewTab === "manual"
+        ? transactions.filter((t) => t.manual_entry || t.id.startsWith("manual-"))
+        : transactions
+    const filtered = ledger.filter((transaction) => {
       const sl = deferredSearch.toLowerCase()
       const matchesSearch = !deferredSearch.trim() ||
         transaction.description.toLowerCase().includes(sl) ||
@@ -515,11 +566,10 @@ export function InteractiveTransactionsList({
       if (a.amount !== b.amount) return b.amount - a.amount
       return (a.description || "").localeCompare(b.description || "")
     })
-  }, [transactions, deferredSearch, categoryFilter, accountFilter, sortBy, showChangedOnly, highlightedSet])
+  }, [transactions, txViewTab, deferredSearch, categoryFilter, accountFilter, sortBy, showChangedOnly, highlightedSet])
 
   const accounts = useMemo(() => Array.from(new Set(transactions.map((t) => t.account))), [transactions])
   const defaultAccount = accounts[0] || "Business Checking"
-  const [manualAccount, setManualAccount] = useState(defaultAccount)
   useEffect(() => {
     if (accounts.length === 0) return
     setBulkAccount((prev) => (prev && accounts.includes(prev) ? prev : accounts[0]))
@@ -789,14 +839,47 @@ export function InteractiveTransactionsList({
         receiptImageFileName = toRead.name
       }
 
-      const { is_personal, is_transfer } = inferFlags(manualCategory)
+      const revenueCategories = new Set([
+        "Sales Revenue",
+        "Service Income",
+        "Freelance Income",
+        "Interest Income",
+        "Other Income",
+        "Refunds Given",
+        "Member Contribution - Ruben Ruiz",
+      ])
+
+      let isIncome = manualIsIncome
+      let is_personal = false
+      let is_transfer = false
+
+      if (manualEntryType === "income") {
+        isIncome = true
+        is_personal = false
+        is_transfer = false
+      } else if (manualEntryType === "business_expense") {
+        isIncome = false
+      } else if (manualEntryType === "personal") {
+        isIncome = false
+        is_personal = true
+        is_transfer = false
+      } else if (manualEntryType === "transfer") {
+        isIncome = false
+        is_transfer = true
+      }
+
+      const cf = inferFlags(manualCategory)
+      if (cf.is_transfer) is_transfer = true
+      if (cf.is_personal) is_personal = true
+      if (revenueCategories.has(manualCategory)) isIncome = true
+
       await onAddTransaction({
         date: manualDate,
         description: manualDescription.trim(),
         amount: Math.abs(amount),
         category: manualCategory,
-        account: manualAccount || defaultAccount,
-        isIncome: manualIsIncome,
+        account: manualAccountText.trim() || defaultAccount,
+        isIncome,
         notes: manualNotes.trim(),
         ...(receiptImageDataUrl
           ? { receiptImageDataUrl, receiptImageFileName: receiptImageFileName ?? "receipt" }
@@ -810,6 +893,8 @@ export function InteractiveTransactionsList({
       setManualDescription("")
       setManualAmount("")
       setManualNotes("")
+      setManualAccountText("")
+      setManualEntryType("business_expense")
       setManualReceiptFile(null)
       setShowManualForm(false)
     } catch {
@@ -1222,9 +1307,9 @@ export function InteractiveTransactionsList({
   return (
     <Card>
       <CardHeader>
-        <div className="flex justify-between items-center">
-          <div>
-            <CardTitle className="flex items-center gap-2">
+        <div className="flex justify-between items-center flex-wrap gap-3">
+          <div className="space-y-2 min-w-0">
+            <CardTitle className="flex items-center gap-2 flex-wrap">
               Live Transaction Editor
               {uncategorizedCount > 0 && (
                 <Badge variant="destructive" className="text-xs cursor-pointer" onClick={() => setCategoryFilter("uncategorized")}>
@@ -1232,9 +1317,19 @@ export function InteractiveTransactionsList({
                 </Badge>
               )}
             </CardTitle>
+            <Tabs value={txViewTab} onValueChange={(v) => setTxViewTab(v as "all" | "manual")}>
+              <TabsList className="h-8">
+                <TabsTrigger value="all" className="text-xs px-3">
+                  All transactions
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="text-xs px-3">
+                  Manual entry
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
             <CardDescription>
-              Click any cell to edit {"\u2022"} Add manual lines with optional notes and receipt image/PDF {"\u2022"} Select
-              multiple for bulk actions ({filteredTransactions.length} transactions)
+              Click any cell to edit {"\u2022"} Use Manual entry to add or review hand-entered lines {"\u2022"} Select multiple for
+              bulk actions ({filteredTransactions.length} shown)
             </CardDescription>
           </div>
           <div className="flex gap-2">
@@ -1291,7 +1386,7 @@ export function InteractiveTransactionsList({
                   Fix Upwork payouts
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowManualForm((v) => !v)}>
-                  {showManualForm ? "Hide Manual Add" : "Add Manual Transaction"}
+                  {showManualForm ? "Hide manual entry form" : "Manual entry form"}
                 </Button>
                 <Button
                   size="sm"
@@ -1372,62 +1467,79 @@ export function InteractiveTransactionsList({
           {showManualForm && (
             <div className="rounded-lg border p-3 space-y-3">
               <p className="text-sm text-muted-foreground">
-                Type the transaction details below. You can attach a receipt image or PDF; it is saved with this business in your browser
-                (large libraries can fill storage—compress photos if needed).
+                Add business expenses paid from personal accounts, cash, or anything missing from statements. You can attach a receipt
+                image or PDF; it is saved with this business in your browser (large libraries can fill storage—compress photos if needed).
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-                <Input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} />
-                <Input
-                  placeholder="Description (e.g. Office Depot)"
-                  value={manualDescription}
-                  onChange={(e) => setManualDescription(e.target.value)}
-                  className="md:col-span-2"
-                />
-                <Input type="number" step="0.01" placeholder="Amount" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} />
-                <Select
-                  value={manualCategory}
-                  onValueChange={(v) => {
-                    setManualCategory(v)
-                    setManualIsIncome(
-                      [
-                        "Sales Revenue",
-                        "Service Income",
-                        "Freelance Income",
-                        "Interest Income",
-                        "Other Income",
-                        "Refunds Given",
-                        "Member Contribution - Ruben Ruiz",
-                      ].includes(v),
-                    )
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {CATEGORIES.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={manualAccount || defaultAccount} onValueChange={setManualAccount}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {accounts.length === 0 ? (
-                      <SelectItem value={defaultAccount}>{defaultAccount}</SelectItem>
-                    ) : (
-                      accounts.map((account) => (
-                        <SelectItem key={account} value={account}>
-                          {account}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                <div className="md:col-span-2 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Date</Label>
+                  <Input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} />
+                </div>
+                <div className="md:col-span-4 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Description</Label>
+                  <Input
+                    placeholder="e.g. Office supplies, client lunch"
+                    value={manualDescription}
+                    onChange={(e) => setManualDescription(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-2 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Amount (positive)</Label>
+                  <Input type="number" step="0.01" placeholder="0.00" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} />
+                </div>
+                <div className="md:col-span-2 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Type</Label>
+                  <Select value={manualEntryType} onValueChange={(v) => setManualEntryType(v as typeof manualEntryType)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="income">Income</SelectItem>
+                      <SelectItem value="business_expense">Business expense</SelectItem>
+                      <SelectItem value="personal">Personal</SelectItem>
+                      <SelectItem value="transfer">Transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="md:col-span-2 flex flex-col gap-1 min-w-0">
+                  <Label className="text-xs text-muted-foreground">Category</Label>
+                  <Select
+                    value={manualCategory}
+                    onValueChange={(v) => {
+                      setManualCategory(v)
+                      setManualIsIncome(
+                        [
+                          "Sales Revenue",
+                          "Service Income",
+                          "Freelance Income",
+                          "Interest Income",
+                          "Other Income",
+                          "Refunds Given",
+                          "Member Contribution - Ruben Ruiz",
+                        ].includes(v),
+                      )
+                    }}
+                  >
+                    <SelectTrigger className="min-w-0">
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category}
                         </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="md:col-span-12 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Account (free text)</Label>
+                  <Input
+                    placeholder="e.g. Personal Checking, Wife's Chase Card, Cash"
+                    value={manualAccountText}
+                    onChange={(e) => setManualAccountText(e.target.value)}
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-start">
                 <div className="md:col-span-4 flex flex-col gap-1">
@@ -1763,6 +1875,11 @@ export function InteractiveTransactionsList({
                             onUpdate={handleTransactionUpdate}
                             onReceiptAttachmentChange={handleReceiptAttachmentChange}
                             accounts={accounts}
+                            onDelete={
+                              transaction.manual_entry || transaction.id.startsWith("manual-")
+                                ? () => void onRemoveTransactions([transaction.id])
+                                : undefined
+                            }
                           />
                         </div>
                       )

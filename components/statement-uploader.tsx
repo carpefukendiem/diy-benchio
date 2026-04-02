@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 interface UploadedStatement {
   id: string
   accountName: string
-  accountType: "bank" | "credit_card" | "personal" | "investment"
+  accountType: "bank" | "credit_card" | "personal" | "investment" | "wf_business_csv"
   month: string
   year: string
   fileName: string
@@ -39,7 +39,7 @@ interface FileProgress {
   year?: string
 }
 
-type AccountType = "bank" | "credit_card" | "personal" | "investment"
+type AccountType = "bank" | "credit_card" | "personal" | "investment" | "wf_business_csv"
 
 interface QueuedUploadFile {
   id: string
@@ -494,6 +494,9 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
           confidence: 1,
         }
       }
+      if (type === "wf_business_csv") {
+        return { ...t }
+      }
       return t
     })
   }
@@ -558,15 +561,21 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
               </div>
               <div className="space-y-2">
                 <Label>Account Type</Label>
-                <Select value={accountType} onValueChange={(v) => setAccountType(v as any)}>
+                <Select value={accountType} onValueChange={(v) => setAccountType(v as AccountType)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="bank">Business Bank Account</SelectItem>
+                    <SelectItem value="wf_business_csv">Wells Fargo Business Checking (CSV Export)</SelectItem>
                     <SelectItem value="credit_card">Business Credit Card</SelectItem>
                     <SelectItem value="personal">Personal Account (auto-excluded from taxes)</SelectItem>
                     <SelectItem value="investment">Investment / Brokerage (auto-excluded from taxes)</SelectItem>
                   </SelectContent>
                 </Select>
+                {accountType === "wf_business_csv" && (
+                  <p className="text-xs text-muted-foreground">
+                    Download from WF online banking: Account → Download Transactions → Date Range: Full Year → Format: CSV
+                  </p>
+                )}
               </div>
             </div>
 
@@ -613,6 +622,7 @@ export function StatementUploader({ onStatementsUpdate, existingStatements, onCo
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="bank">Business Bank Account</SelectItem>
+                          <SelectItem value="wf_business_csv">Wells Fargo Business Checking (CSV Export)</SelectItem>
                           <SelectItem value="credit_card">Business Credit Card</SelectItem>
                           <SelectItem value="personal">Personal Account (auto-excluded from taxes)</SelectItem>
                           <SelectItem value="investment">Investment / Brokerage (auto-excluded from taxes)</SelectItem>

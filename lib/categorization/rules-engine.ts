@@ -884,10 +884,9 @@ export function smartFallback(tx: ParsedTransaction): {
   confidence: number;
 } | null {
   const desc = tx.description.toLowerCase();
-  const amount = tx.amount;
 
   // Credits (income): no rule matched → Other Income (never Refunds Given as fallback)
-  if (amount > 0) {
+  if (tx.type === 'credit') {
     return { category_id: '00000000-0000-0000-0001-000000000003', is_personal: false, is_transfer: false, confidence: 0.40 };
   }
 
@@ -895,15 +894,32 @@ export function smartFallback(tx: ParsedTransaction): {
   return null;
 }
 
+function highPriorityPatternMatches(
+  rule: { pattern: string; match?: 'contains' | 'regex' },
+  description: string,
+  descLower: string,
+): boolean {
+  if (rule.match === 'regex') {
+    try {
+      return new RegExp(rule.pattern, 'i').test(description);
+    } catch {
+      return false;
+    }
+  }
+  return descLower.includes(rule.pattern);
+}
+
 // High-priority patterns that always win regardless of vendor rules
 // (e.g. overdraft fee on a GHL transaction must be Bank Fee, not Software)
 // amountMax: when set, only match when Math.abs(tx.amount) <= amountMax (e.g. small grocery = office kitchen)
+// match: 'regex' uses pattern as case-insensitive RegExp on the original description
 const HIGH_PRIORITY_PATTERNS: Array<{
   pattern: string;
   category_id: string;
   is_personal: boolean;
   is_transfer: boolean;
   amountMax?: number;
+  match?: 'contains' | 'regex';
 }> = [
   // --- Income (Schedule C Line 1) ---
   // Fees must win before generic Stripe transfer/payout income patterns.
@@ -913,7 +929,14 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'instant payout fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
   { pattern: 'stripe transfer', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'stripe payout', category_id: '00000000-0000-0000-0001-000000000001', is_personal: false, is_transfer: false },
+  { pattern: 'money transfer authorized.*from upwork', match: 'regex', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'money transfer authorized.*payment escrow', match: 'regex', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   { pattern: 'upwork escrow', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'upwork escrow in edi', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'edi pymnts', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'payment escrow i edi', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'payment escrow inc', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'from upwork', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   { pattern: 'from upwork ca', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   // --- Transfers / excluded from Schedule C ---
   { pattern: 'save as you go', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
@@ -941,9 +964,7 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'messaging credits', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // Home Depot ONLINE PMT = credit card payment, not home improvement
   { pattern: 'home depot online pmt', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
-  // Upwork Escrow via Chase
-  { pattern: 'money transf', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
-  { pattern: 'payment escr', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
+  { pattern: 'upwork', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   // --- Prime Video (personal) BEFORE Amazon Prime membership (business software) ---
   { pattern: 'prime video channe', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
   { pattern: 'prime video channels', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
@@ -1042,13 +1063,24 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'ralphs', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
   { pattern: 'pet house', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'codecademy', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false },
+  { pattern: 'webflow', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'perplexity', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'mangools', category_id: '00000000-0000-0000-0002-000000000002', is_personal: false, is_transfer: false },
+  { pattern: 'x corp', category_id: '00000000-0000-0000-0002-000000000002', is_personal: false, is_transfer: false },
+  { pattern: 'twitter verified', category_id: '00000000-0000-0000-0002-000000000002', is_personal: false, is_transfer: false },
+  { pattern: 'ace parking', category_id: '00000000-0000-0000-0002-000000000032', is_personal: false, is_transfer: false },
+  { pattern: 'sq *santa barbara', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
+  { pattern: 'southern california edison', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false },
+  { pattern: 'sce web', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false },
+  { pattern: 'so cal edison', category_id: '00000000-0000-0000-0002-000000000020', is_personal: false, is_transfer: false },
+  { pattern: 'little caesars', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
   { pattern: 'lemos feed', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'lemos pet', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
 ];
 
 /** Same high-priority pass as `categorizeByRules` — use in client `handleRecategorize` before keyword/built-in rules. */
 export function matchHighPriorityDescription(
-  descLower: string,
+  description: string,
   absAmount: number,
 ): {
   category_id: string
@@ -1056,8 +1088,9 @@ export function matchHighPriorityDescription(
   is_transfer: boolean
   confidence: number
 } | null {
+  const descLower = description.toLowerCase()
   for (const rule of HIGH_PRIORITY_PATTERNS) {
-    const matchesPattern = descLower.includes(rule.pattern)
+    const matchesPattern = highPriorityPatternMatches(rule, description, descLower)
     const withinAmount = rule.amountMax == null || absAmount <= rule.amountMax
     if (matchesPattern && withinAmount) {
       return {
@@ -1080,7 +1113,7 @@ export function categorizeByRules(
 
     // Priority 0: High-priority patterns override all vendor rules
     for (const rule of HIGH_PRIORITY_PATTERNS) {
-      const matchesPattern = descLower.includes(rule.pattern)
+      const matchesPattern = highPriorityPatternMatches(rule, tx.description, descLower)
       const withinAmount = rule.amountMax == null || Math.abs(tx.amount) <= rule.amountMax
       if (matchesPattern && withinAmount) {
         return {

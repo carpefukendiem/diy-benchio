@@ -168,9 +168,9 @@ function parseWFPDFText(text: string) {
       const amtMatches = rest.match(/[\d,]+\.\d{2}/g) || []
       const amounts = amtMatches.map(a => parseFloat(a.replace(/,/g, ""))).filter(a => a > 0)
       // Description: everything before the first amount
-      const descPart = amtMatches.length > 0
-        ? rest.substring(0, rest.indexOf(amtMatches[0])).trim()
-        : rest.trim()
+      const firstAmt = amtMatches[0]
+      const descPart =
+        firstAmt !== undefined ? rest.substring(0, rest.indexOf(firstAmt)).trim() : rest.trim()
       current = { date: `${year}-${mo}-${da}`, descParts: descPart ? [descPart] : [], amounts }
     } else if (current) {
       // Continuation line
@@ -494,6 +494,125 @@ function parsePDFText(text: string) {
 }
 
 // ========================================
+// Wells Fargo Business Checking — online CSV export (no header row)
+// Columns: "MM/DD/YYYY","signed_amount","*","",description
+// Positive amount = credit; negative = debit.
+// ========================================
+function splitCsvFields(line: string): string[] {
+  const fields: string[] = []
+  let cur = ""
+  let i = 0
+  let inQuotes = false
+  while (i < line.length) {
+    const c = line[i]
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') {
+        cur += '"'
+        i += 2
+        continue
+      }
+      if (c === '"') {
+        inQuotes = false
+        i++
+        continue
+      }
+      cur += c
+      i++
+      continue
+    }
+    if (c === '"') {
+      inQuotes = true
+      i++
+      continue
+    }
+    if (c === ",") {
+      fields.push(cur.trim())
+      cur = ""
+      i++
+      continue
+    }
+    cur += c
+    i++
+  }
+  fields.push(cur.trim())
+  return fields.map((f) => f.replace(/^"|"$/g, ""))
+}
+
+const WF_BIZ_CSV_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+
+function rowLooksLikeWellsFargoBusinessCsv(parts: string[]): boolean {
+  if (parts.length < 5) return false
+  const d = parts[0].trim()
+  if (!WF_BIZ_CSV_DATE.test(d)) return false
+  const n = parseFloat(parts[1].replace(/,/g, ""))
+  return Number.isFinite(n)
+}
+
+function parseWellsFargoBusinessCSV(csvText: string) {
+  const rawLines = csvText.split(/\r?\n/)
+  const txns: any[] = []
+
+  for (const rawLine of rawLines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const parts = splitCsvFields(line)
+    if (!rowLooksLikeWellsFargoBusinessCsv(parts)) continue
+
+    const dm = parts[0].trim().match(WF_BIZ_CSV_DATE)
+    if (!dm) continue
+    const mo = dm[1].padStart(2, "0")
+    const da = dm[2].padStart(2, "0")
+    const yr = dm[3]
+
+    const signed = parseFloat(parts[1].replace(/,/g, ""))
+    if (!Number.isFinite(signed) || signed === 0) continue
+
+    const description = (parts[4] ?? "").trim() || parts.slice(4).join(",").trim()
+    if (!description) continue
+
+    const amount = Math.abs(signed)
+    const type = signed > 0 ? "credit" : "debit"
+
+    txns.push({
+      date: `${yr}-${mo}-${da}`,
+      description: description.substring(0, 200),
+      amount,
+      type,
+      raw_line: line.length > 500 ? line.substring(0, 500) : line,
+    })
+  }
+
+  const monthCounts: Record<string, number> = {}
+  txns.forEach((t) => {
+    const m = t.date.substring(5, 7)
+    monthCounts[m] = (monthCounts[m] || 0) + 1
+  })
+  const topMonth = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "01"
+  const monthNames = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ]
+
+  console.log(`[csv-wf-business] Parsed ${txns.length} transactions, top month: ${topMonth}`)
+
+  return {
+    transactions: txns,
+    statementMonth: monthNames[parseInt(topMonth, 10) - 1] || "Unknown",
+    statementYear: txns[0]?.date?.substring(0, 4) || "2025",
+  }
+}
+
+// ========================================
 // Parse CSV text into transactions
 // Handles 3 formats:
 //   1. Wells Fargo text export (no headers, multiline, amount on its own line)
@@ -608,13 +727,19 @@ function parseWellsFargoTextExport(lines: string[]) {
   const txns: any[] = []
   const txRe = /^(\d{1,2})\/(\d{1,2})\s+(.+)/
 
-  // Credit keywords (these are deposits / income)
+  // Credit keywords (these are deposits / income) — align with WF / Upwork settlement strings
   const creditKW = [
     "stripe transfer",
     "online transfer from",
+    "upwork escrow",
+    "upwork escrow in edi",
+    "edi pymnts",
     "from upwork",
     "upwork",
     "upwork ca",
+    "payment escrow i edi",
+    "payment escrow inc",
+    "payment escrow",
     "money transfer authorized",
     "deposit",
     "credit memo",
@@ -736,12 +861,16 @@ function toUIFormat(categorized: any[] | undefined | null) {
       .replace(/Recurring Payment -?\s*/i,"")
       .replace(/Purchase with Cash Back \$?\s*authorized on \d{2}\/\d{2}\s*/i,"")
       .split(/\s{2,}/)[0].substring(0,50).trim()
+    // Credit/debit from parser (WF Business CSV uses amount sign → type). Any 0001-* category
+    // counts as income in the UI so Freelance/Stripe stay revenue even if type was mis-detected.
+    const isIncome =
+      tx.type === "credit" || (tx.category_id?.startsWith("00000000-0000-0000-0001-") ?? false)
     return {
       date: tx.date,
       description: tx.description,
       amount: Math.abs(tx.amount),
       category: categoryName,
-      isIncome: tx.type === "credit" || (tx.category_id?.startsWith("00000000-0000-0000-0001-") ?? false),
+      isIncome,
       merchantName,
       pending: false,
       is_personal: Boolean(tx.is_personal),
@@ -788,8 +917,13 @@ async function processStatementBuffer(params: {
     )
   } else {
     const csvText = buffer.toString("utf-8")
-    parsed = parseCSVText(csvText)
-    console.log(`[upload] CSV parsed: ${parsed.transactions?.length ?? 0} txns`)
+    if (accountType === "wf_business_csv") {
+      parsed = parseWellsFargoBusinessCSV(csvText)
+      console.log(`[upload] WF Business CSV parsed: ${parsed.transactions?.length ?? 0} txns`)
+    } else {
+      parsed = parseCSVText(csvText)
+      console.log(`[upload] CSV parsed: ${parsed.transactions?.length ?? 0} txns`)
+    }
   }
 
   if (!parsed || !Array.isArray(parsed.transactions)) {
