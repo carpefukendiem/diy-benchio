@@ -231,7 +231,6 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'little caesars', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'chipotle', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
   { pattern: 'in-n-out', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
-  { pattern: 'pressed juicery', match: 'contains', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false, confidence: 0.85 },
 
   // ============================
   // OFFICE SUPPLIES (0002-13) — Schedule C Line 18
@@ -970,6 +969,9 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'zelle payment from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'zelle from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
 
+  // --- Audible (must precede amzn / Amzn.com/bill) → Education & Training ---
+  { pattern: 'audible', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false },
+
   // --- Amazon purchases (permanent rule) → Software & Web Hosting (not income) ---
   { pattern: 'amzn', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'amazon.com', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
@@ -1019,11 +1021,11 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   // Home Depot ONLINE PMT = credit card payment, not home improvement
   { pattern: 'home depot online pmt', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
   { pattern: 'upwork', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
-  // --- Prime Video (personal) BEFORE Amazon Prime membership (business software) ---
-  { pattern: 'prime video channe', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'prime video channels', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'amazon prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
-  { pattern: 'prime video', category_id: '00000000-0000-0000-0004-000000000003', is_personal: true, is_transfer: false },
+  // --- Prime Video → Software (matches manual Schedule C export; beats amzn-less "Prime Video *…" charges) ---
+  { pattern: 'prime video channe', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'prime video channels', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'amazon prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'amazon prime', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // --- Crypto / investments (excluded from Schedule C) ---
   { pattern: 'instant pmt from coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
@@ -1080,6 +1082,7 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'la cumbre fuel', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
   { pattern: '7-eleven', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
   { pattern: 'clean wave car', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
+  { pattern: 'united fin cas ins', category_id: '00000000-0000-0000-0002-000000000003', is_personal: false, is_transfer: false },
   // --- Home office / supplies / postage ---
   { pattern: 'the home depot', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, amountMax: 600 },
   { pattern: 'home depot', category_id: '00000000-0000-0000-0002-000000000026', is_personal: false, is_transfer: false, amountMax: 600 },
@@ -1101,8 +1104,8 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'coldstone', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
   { pattern: 'cvs', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
   { pattern: 'rite aid', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
-  { pattern: 'bream optometry', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false },
-  { pattern: 'bream opt', category_id: '00000000-0000-0000-0002-000000000036', is_personal: false, is_transfer: false },
+  { pattern: 'bream optometry', category_id: '00000000-0000-0000-0002-000000000035', is_personal: false, is_transfer: false },
+  { pattern: 'bream opt', category_id: '00000000-0000-0000-0002-000000000035', is_personal: false, is_transfer: false },
   { pattern: 'target', category_id: '00000000-0000-0000-0002-000000000013', is_personal: false, is_transfer: false },
   { pattern: 'smoke 4 less', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'milpas liquor', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false },
