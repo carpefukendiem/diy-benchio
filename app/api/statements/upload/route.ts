@@ -33,6 +33,8 @@ const CAT: Record<string, { name: string; isPersonal: boolean; isTransfer: boole
   "00000000-0000-0000-0002-000000000026": { name: "Home Office Expense", isPersonal: false, isTransfer: false },
   "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0003-000000000002": { name: "Member Contribution - Ruben Ruiz", isPersonal: false, isTransfer: true },
+  "00000000-0000-0000-0003-000000000008": { name: "Owner's Contribution", isPersonal: false, isTransfer: true },
+  "00000000-0000-0000-0003-000000000009": { name: "Loan Proceeds", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0003-000000000003": { name: "Internal Transfer", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0003-000000000005": { name: "Credit Card Payment", isPersonal: false, isTransfer: true },
   "00000000-0000-0000-0004-000000000001": { name: "Personal Expense", isPersonal: true, isTransfer: false },
@@ -890,16 +892,22 @@ function toUIFormat(categorized: any[] | undefined | null) {
       .replace(/Recurring Payment -?\s*/i,"")
       .replace(/Purchase with Cash Back \$?\s*authorized on \d{2}\/\d{2}\s*/i,"")
       .split(/\s{2,}/)[0].substring(0,50).trim()
-    // Credit/debit from parser (WF Business CSV uses amount sign → type). Any 0001-* category
-    // counts as income in the UI so Freelance/Stripe stay revenue even if type was mis-detected.
-    const isIncome =
-      tx.type === "credit" || (tx.category_id?.startsWith("00000000-0000-0000-0001-") ?? false)
+    // Prefer category metadata when present so non-revenue credits (e.g. owner's contribution) stay isIncome: false.
+    const catMeta = tx.category_id ? CATEGORY_ID_TO_NAME[tx.category_id] : undefined
+    const isIncome = catMeta
+      ? catMeta.isIncome
+      : tx.type === "credit" || (tx.category_id?.startsWith("00000000-0000-0000-0001-") ?? false)
+    const exclude =
+      Boolean(tx.exclude_from_revenue) ||
+      tx.category_id === "00000000-0000-0000-0003-000000000008" ||
+      tx.category_id === "00000000-0000-0000-0003-000000000009"
     return {
       date: tx.date,
       description: tx.description,
       amount: Math.abs(tx.amount),
       category: categoryName,
       isIncome,
+      exclude,
       merchantName,
       pending: false,
       is_personal: Boolean(tx.is_personal),

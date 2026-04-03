@@ -13,6 +13,8 @@ export interface CategorizedTransaction extends ParsedTransaction {
   schedule_c_line: string | null;
   is_personal: boolean;
   is_transfer: boolean;
+  /** When true, omit from Schedule C Line 1 / gross receipts and all revenue rollups */
+  exclude_from_revenue?: boolean;
   confidence: number;
   categorized_by: 'rule' | 'ai' | 'user' | null;
 }
@@ -76,6 +78,10 @@ export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boole
   "00000000-0000-0000-0001-000000000006": { name: "Returns & Allowances", isIncome: false },
   "00000000-0000-0000-0003-000000000001": { name: "Member Drawing - Ruben Ruiz", isIncome: false },
   "00000000-0000-0000-0003-000000000002": { name: "Member Contribution - Ruben Ruiz", isIncome: true },
+  /** Non-revenue credits: owner funding the business — not gross receipts */
+  "00000000-0000-0000-0003-000000000008": { name: "Owner's Contribution", isIncome: false },
+  /** Non-revenue credits: loan / capital advances (e.g. Stripe Capital) — not gross receipts */
+  "00000000-0000-0000-0003-000000000009": { name: "Loan Proceeds", isIncome: false },
   "00000000-0000-0000-0003-000000000003": { name: "Internal Transfer", isIncome: false },
   "00000000-0000-0000-0003-000000000005": { name: "Credit Card Payment", isIncome: false },
   "00000000-0000-0000-0003-000000000006": { name: "Owner Draw", isIncome: false },
@@ -909,18 +915,60 @@ function highPriorityPatternMatches(
   return descLower.includes(rule.pattern);
 }
 
+/** Non-revenue credits: owner funding (not gross receipts) */
+export const OWNERS_CONTRIBUTION_CATEGORY_ID = '00000000-0000-0000-0003-000000000008';
+/** Non-revenue credits: loans / capital advances (e.g. Stripe Capital) */
+export const LOAN_PROCEEDS_CATEGORY_ID = '00000000-0000-0000-0003-000000000009';
+
+const OWNER_INFLOW_PHRASES = [
+  'online transfer from',
+  'transfer from',
+  'zelle payment from',
+  'zelle from',
+  'mobile transfer from',
+] as const;
+
+/** Matches sender-style names for the business owner in bank description text (WF / Zelle style). */
+const OWNER_NAME_ALIASES_RE =
+  /\b(?:ruben\s+ruiz|ruiz\s*,?\s*r\.?|r\s+ruiz|nail-ruiz\s*j?|nail\s*ruiz)\b/i;
+
+/**
+ * Credits: inflow phrase + owner name in sender field — not Schedule C gross receipts.
+ * Use before generic "online transfer from" / Zelle rules.
+ */
+export function tryMatchOwnerContributionByName(description: string, isCredit: boolean): boolean {
+  if (!isCredit) return false;
+  const dl = description.toLowerCase();
+  if (!OWNER_INFLOW_PHRASES.some((p) => dl.includes(p))) return false;
+  return OWNER_NAME_ALIASES_RE.test(description);
+}
+
 // High-priority patterns that always win regardless of vendor rules
 // (e.g. overdraft fee on a GHL transaction must be Bank Fee, not Software)
 // amountMax: when set, only match when Math.abs(tx.amount) <= amountMax (e.g. small grocery = office kitchen)
 // match: 'regex' uses pattern as case-insensitive RegExp on the original description
-const HIGH_PRIORITY_PATTERNS: Array<{
+// creditOnly: only match when tx.type === 'credit' (or client passes isCredit: true)
+// exclude_from_revenue: omit from Schedule C Line 1 / gross receipts rollups
+export type HighPriorityRule = {
   pattern: string;
   category_id: string;
   is_personal: boolean;
   is_transfer: boolean;
   amountMax?: number;
   match?: 'contains' | 'regex';
-}> = [
+  creditOnly?: boolean;
+  exclude_from_revenue?: boolean;
+};
+
+const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
+  // --- Non-revenue credits (before any income / Stripe catch-alls) ---
+  { pattern: 'stripe capital', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'stripe loan', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'loan deposit', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'online transfer from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'transfer from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'zelle payment from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'zelle from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   // --- Income (Schedule C Line 1) ---
   // Fees must win before generic Stripe transfer/payout income patterns.
   { pattern: 'stripe fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
@@ -946,7 +994,6 @@ const HIGH_PRIORITY_PATTERNS: Array<{
   { pattern: 'monthly service fee', category_id: '00000000-0000-0000-0002-000000000010', is_personal: false, is_transfer: false },
   { pattern: 'overdraft protection from', category_id: '00000000-0000-0000-0003-000000000003', is_personal: false, is_transfer: true },
   { pattern: 'online transfer to ruiz r everyday checking', category_id: '00000000-0000-0000-0003-000000000001', is_personal: false, is_transfer: true },
-  { pattern: 'online transfer from ruiz r', category_id: '00000000-0000-0000-0003-000000000002', is_personal: false, is_transfer: true },
   { pattern: 'chase credit crd', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
   // GoHighLevel / white-label (bank & Stripe text) — before generic "stripe" keyword → merchant fees
   // Bench 2023 P&L: Software & Web Hosting Expense ~$16k for Ranking SB; GHL + usage must land here, not revenue.
@@ -1082,14 +1129,27 @@ const HIGH_PRIORITY_PATTERNS: Array<{
 export function matchHighPriorityDescription(
   description: string,
   absAmount: number,
+  opts?: { isCredit?: boolean },
 ): {
   category_id: string
   is_personal: boolean
   is_transfer: boolean
   confidence: number
+  exclude_from_revenue?: boolean
 } | null {
+  const isCredit = opts?.isCredit
+  if (isCredit === true && tryMatchOwnerContributionByName(description, true)) {
+    return {
+      category_id: OWNERS_CONTRIBUTION_CATEGORY_ID,
+      is_personal: false,
+      is_transfer: true,
+      confidence: 0.99,
+      exclude_from_revenue: true,
+    }
+  }
   const descLower = description.toLowerCase()
   for (const rule of HIGH_PRIORITY_PATTERNS) {
+    if (rule.creditOnly && isCredit !== true) continue
     const matchesPattern = highPriorityPatternMatches(rule, description, descLower)
     const withinAmount = rule.amountMax == null || absAmount <= rule.amountMax
     if (matchesPattern && withinAmount) {
@@ -1098,6 +1158,7 @@ export function matchHighPriorityDescription(
         is_personal: rule.is_personal,
         is_transfer: rule.is_transfer,
         confidence: 0.99,
+        exclude_from_revenue: rule.exclude_from_revenue,
       }
     }
   }
@@ -1111,8 +1172,23 @@ export function categorizeByRules(
   return transactions.map(tx => {
     const descLower = tx.description.toLowerCase();
 
+    // Priority -0.5: Owner inflow + sender name (credits only) — before generic transfer patterns
+    if (tx.type === 'credit' && tryMatchOwnerContributionByName(tx.description, true)) {
+      return {
+        ...tx,
+        category_id: OWNERS_CONTRIBUTION_CATEGORY_ID,
+        schedule_c_line: null,
+        is_personal: false,
+        is_transfer: true,
+        exclude_from_revenue: true,
+        confidence: 0.99,
+        categorized_by: 'rule' as const,
+      };
+    }
+
     // Priority 0: High-priority patterns override all vendor rules
     for (const rule of HIGH_PRIORITY_PATTERNS) {
+      if (rule.creditOnly && tx.type !== 'credit') continue;
       const matchesPattern = highPriorityPatternMatches(rule, tx.description, descLower)
       const withinAmount = rule.amountMax == null || Math.abs(tx.amount) <= rule.amountMax
       if (matchesPattern && withinAmount) {
@@ -1122,6 +1198,7 @@ export function categorizeByRules(
           schedule_c_line: null,
           is_personal: rule.is_personal,
           is_transfer: rule.is_transfer,
+          exclude_from_revenue: rule.exclude_from_revenue ?? false,
           confidence: 0.99,
           categorized_by: 'rule' as const,
         };

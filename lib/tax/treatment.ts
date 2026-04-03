@@ -7,6 +7,8 @@ export type UiTransactionLike = {
   description?: string
   is_personal?: boolean
   is_transfer?: boolean
+  /** Non-revenue credits — omit from gross receipts / revenue rollups */
+  exclude?: boolean
 }
 
 export function getScheduleCLineForCategory(category: string) {
@@ -56,6 +58,7 @@ export function computeUiExpenseTotals(transactions: UiTransactionLike[]) {
 
   for (const t of transactions) {
     if (t.isIncome) continue
+    if (t.exclude === true) continue
 
     const cl = (t.category || "").toLowerCase()
     if (!cl || cl.includes("uncategorized")) continue

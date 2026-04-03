@@ -55,6 +55,8 @@ interface Transaction {
   category: string
   account: string
   isIncome: boolean
+  /** Non-revenue credits (owner funding, loan proceeds) — omitted from revenue / Schedule C Line 1 rollups */
+  exclude?: boolean
   merchantName?: string
   pending?: boolean
   /** True for rows created via Manual Entry (not from statement import) */
@@ -417,7 +419,7 @@ export default function CaliforniaBusinessAccounting() {
     // Use the single source of truth rules engine (369+ rules + smart fallback)
     let updated = 0
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
-    const newTransactions = currentBusiness.transactions.map(t => {
+    const withExclude = currentBusiness.transactions.map(t => {
       const dl = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase()
       const dlNorm = dl.replace(/\s+/g, " ")
       const absAmt = Math.abs(t.amount || 0)
@@ -437,19 +439,22 @@ export default function CaliforniaBusinessAccounting() {
         }
       }
 
-      // Align with server rules engine: high-priority patterns first (Prime Video, crypto, DLR, etc.)
+      // Align with server rules engine: high-priority patterns first (non-revenue credits, Prime Video, crypto, DLR, etc.)
       const combinedDesc = `${t.description || ""} ${t.merchantName || ""}`.replace(/\s+/g, " ").trim()
-      const hp = matchHighPriorityDescription(combinedDesc, absAmt)
+      const hp = matchHighPriorityDescription(combinedDesc, absAmt, { isCredit: t.isIncome })
       if (hp && (forceAll || t.categorized_by !== "user")) {
         const catInfo = CATEGORY_ID_TO_NAME[hp.category_id]
         if (catInfo) {
           updated++
+          const cat = catInfo.name
+          const exclude = cat === "Owner's Contribution" || cat === "Loan Proceeds"
           return {
             ...t,
-            category: catInfo.name,
+            category: cat,
             isIncome: catInfo.isIncome,
             is_personal: hp.is_personal,
             is_transfer: hp.is_transfer,
+            exclude,
             categorized_by: "rule",
             confidence: hp.confidence,
           }
@@ -584,6 +589,10 @@ export default function CaliforniaBusinessAccounting() {
 
       return t
     })
+    const newTransactions = withExclude.map((t) => ({
+      ...t,
+      exclude: t.category === "Owner's Contribution" || t.category === "Loan Proceeds",
+    })) as Transaction[]
 
     const changedIds = newTransactions
       .filter((next, idx) => {
@@ -592,7 +601,8 @@ export default function CaliforniaBusinessAccounting() {
         return prev.category !== next.category ||
           prev.isIncome !== next.isIncome ||
           prev.is_personal !== next.is_personal ||
-          prev.is_transfer !== next.is_transfer
+          prev.is_transfer !== next.is_transfer ||
+          Boolean(prev.exclude) !== Boolean(next.exclude)
       })
       .map((t) => t.id)
 
@@ -691,7 +701,7 @@ export default function CaliforniaBusinessAccounting() {
     }, 0)
 
     const totalRevenue = currentBusiness.transactions
-      .filter((t) => t.isIncome)
+      .filter((t) => t.isIncome && !t.exclude)
       .reduce((sum, t) => sum + t.amount, 0)
 
     const { totalExpenses, schedCDeductions, healthInsuranceTotal, sepIraTotal } = computeUiExpenseTotals(currentBusiness.transactions)

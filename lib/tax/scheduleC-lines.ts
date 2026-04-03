@@ -61,6 +61,8 @@ export const SCHEDULE_C_LINES: Record<string, { line: string; label: string; ded
 
   // --- Capital / financing and explicitly non-expense categories ---
   "Business Treasury Investment": { line: "N/A", label: "Asset -- not current year deduction" },
+  "Owner's Contribution": { line: "N/A", label: "Owner contribution — not gross receipts" },
+  "Loan Proceeds": { line: "N/A", label: "Loan / capital advance — not gross receipts" },
   "Business Loan Proceeds": { line: "N/A", label: "Loan proceeds -- not income, not deductible (debt)" },
   "Loan Repayment - Principal": { line: "N/A", label: "Loan principal -- not deductible" },
   "Loan Interest Expense": { line: "16b", label: "Interest expense (deductible)" },

@@ -39,6 +39,8 @@ interface Transaction {
   receiptImageFileName?: string
   is_personal?: boolean
   is_transfer?: boolean
+  /** Non-revenue credits — omitted from revenue / Schedule C Line 1 */
+  exclude?: boolean
   categorized_by?: "rule" | "ai" | "user" | null
   confidence?: number
   plaidTransactionId?: string
@@ -144,6 +146,8 @@ export const CATEGORIES = [
   "Owner Draw",
   "Member Drawing - Ruben Ruiz",
   "Member Contribution - Ruben Ruiz",
+  "Owner's Contribution",
+  "Loan Proceeds",
   "Internal Transfer",
   "Credit Card Payment",
   "Brokerage Transfer",
@@ -342,6 +346,11 @@ const TransactionTableRow = memo(function TransactionTableRow({
           {transaction.merchantName && (
             <Badge variant="outline" className="text-xs w-fit max-w-full whitespace-normal break-words">
               {transaction.merchantName}
+            </Badge>
+          )}
+          {transaction.exclude === true && (
+            <Badge variant="secondary" className="text-[10px] w-fit">
+              Non-revenue
             </Badge>
           )}
         </div>
@@ -820,13 +829,16 @@ export function InteractiveTransactionsList({
           c.includes("credit card payment") ||
           c.includes("member drawing") ||
           c.includes("member contribution") ||
+          c.includes("owner's contribution") ||
+          c.includes("loan proceeds") ||
           c.includes("owner draw") ||
           c.includes("internal transfer") ||
           c.includes("zelle / venmo transfer") ||
           c.includes("brokerage transfer") ||
           c.includes("business treasury") ||
           c.includes("crypto / investments")
-        return { is_personal, is_transfer }
+        const exclude = category === "Owner's Contribution" || category === "Loan Proceeds"
+        return { is_personal, is_transfer, exclude }
       }
 
       let receiptImageDataUrl: string | undefined
@@ -872,6 +884,7 @@ export function InteractiveTransactionsList({
       if (cf.is_transfer) is_transfer = true
       if (cf.is_personal) is_personal = true
       if (revenueCategories.has(manualCategory)) isIncome = true
+      if (cf.exclude) isIncome = false
 
       await onAddTransaction({
         date: manualDate,
@@ -880,6 +893,7 @@ export function InteractiveTransactionsList({
         category: manualCategory,
         account: manualAccountText.trim() || defaultAccount,
         isIncome,
+        exclude: cf.exclude,
         notes: manualNotes.trim(),
         ...(receiptImageDataUrl
           ? { receiptImageDataUrl, receiptImageFileName: receiptImageFileName ?? "receipt" }
@@ -1019,19 +1033,23 @@ export function InteractiveTransactionsList({
             "Refunds Given",
             "Member Contribution - Ruben Ruiz",
           ]
-          updates.isIncome = revenueCategories.includes(value as string)
-          const c = String(value || "").toLowerCase()
+          const cat = String(value || "")
+          updates.isIncome = revenueCategories.includes(cat)
+          const c = cat.toLowerCase()
           updates.is_personal = c.includes("personal") || c.includes("crypto / investments")
           updates.is_transfer =
             c.includes("credit card payment") ||
             c.includes("member drawing") ||
             c.includes("member contribution") ||
+            c.includes("owner's contribution") ||
+            c.includes("loan proceeds") ||
             c.includes("owner draw") ||
             c.includes("internal transfer") ||
             c.includes("zelle / venmo transfer") ||
             c.includes("brokerage transfer") ||
             c.includes("business treasury") ||
             c.includes("crypto / investments")
+          updates.exclude = cat === "Owner's Contribution" || cat === "Loan Proceeds"
           updates.categorized_by = "user"
           updates.confidence = 1
         }
@@ -1069,12 +1087,15 @@ export function InteractiveTransactionsList({
       c.includes("credit card payment") ||
       c.includes("member drawing") ||
       c.includes("member contribution") ||
+      c.includes("owner's contribution") ||
+      c.includes("loan proceeds") ||
       c.includes("owner draw") ||
       c.includes("internal transfer") ||
       c.includes("zelle / venmo transfer") ||
       c.includes("brokerage transfer") ||
       c.includes("business treasury") ||
       c.includes("crypto / investments")
+    const exclude = category === "Owner's Contribution" || category === "Loan Proceeds"
 
     const updates = Array.from(selectedTransactions).map((id) => ({
       id,
@@ -1091,6 +1112,7 @@ export function InteractiveTransactionsList({
         ].includes(category),
         is_personal,
         is_transfer,
+        exclude,
         categorized_by: "user" as const,
         confidence: 1,
       },

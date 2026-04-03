@@ -22,6 +22,8 @@ interface Transaction {
   category: string
   account: string
   isIncome: boolean
+  /** Non-revenue credits — omitted from revenue rollups */
+  exclude?: boolean
   merchantName?: string
   is_personal?: boolean
   is_transfer?: boolean
@@ -34,6 +36,8 @@ function categoryLooksTransferLike(cat: string): boolean {
   return [
     "member drawing",
     "member contribution",
+    "owner's contribution",
+    "loan proceeds",
     "internal transfer",
     "credit card payment",
     "zelle",
@@ -118,6 +122,8 @@ const SCHEDULE_C_LINES: Record<string, { line: string; label: string; deductPct?
   "SEP-IRA Contribution": { line: "S1-16", label: "Self-employed SEP/SIMPLE/qualified plans (Schedule 1)" },
   "Business Treasury Investment": { line: "N/A", label: "Asset -- not current year deduction" },
   // Stripe Capital / Business Loan — proceeds are NOT income, repayments are NOT deductible (principal)
+  "Owner's Contribution": { line: "N/A", label: "Owner contribution — not gross receipts" },
+  "Loan Proceeds": { line: "N/A", label: "Loan / capital advance — not gross receipts" },
   "Business Loan Proceeds": { line: "N/A", label: "Loan proceeds -- not income, not deductible (debt)" },
   "Loan Repayment - Principal": { line: "N/A", label: "Loan principal -- not deductible" },
   "Loan Interest Expense": { line: "16b", label: "Interest expense (deductible)" },
@@ -175,7 +181,7 @@ export function InteractiveReports({
   const revenueTotals = useMemo(
     () =>
       transactions
-        .filter((t) => t.isIncome === true && t.is_transfer !== true)
+        .filter((t) => t.isIncome === true && t.is_transfer !== true && t.exclude !== true)
         .reduce((s, t) => s + t.amount, 0),
     [transactions],
   )
@@ -202,13 +208,13 @@ export function InteractiveReports({
     const capital: [string, typeof categoryTotals[string]][] = []
 
     const personalKeywords = ["personal", "crypto / investments", "atm withdrawal", "cash withdrawal"]
-    const transferKeywords = ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
+    const transferKeywords = ["member drawing", "member contribution", "owner's contribution", "internal transfer", "credit card payment", "zelle", "venmo", "owner draw", "brokerage transfer", "business treasury"]
     const cogsKeywords = ["cost of service", "cost of goods", " cogs"]
     const aboveLineKeywords = ["health insurance", "sep-ira"]
     const nondeductibleKeywords = ["nondeductible"]
     const returnsKeywords = ["returns & allowances", "refunds given"]
     // Capital/balance-sheet items: not income, not deductible expenses
-    const capitalKeywords = ["business loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
+    const capitalKeywords = ["business loan proceeds", "loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
 
     Object.entries(categoryTotals).forEach(([cat, data]) => {
       const cl = cat.toLowerCase()
@@ -273,10 +279,10 @@ export function InteractiveReports({
       const mn = monthNames[d.getMonth()]
       if (!mn) return
       const cl = t.category?.toLowerCase() || ""
-      const isTransfer = t.is_transfer === true || ["member drawing", "member contribution", "internal transfer", "credit card payment", "zelle", "owner draw", "brokerage transfer", "business treasury"].some(k => cl.includes(k))
+      const isTransfer = t.is_transfer === true || ["member drawing", "member contribution", "owner's contribution", "internal transfer", "credit card payment", "zelle", "owner draw", "brokerage transfer", "business treasury"].some(k => cl.includes(k))
       const isPersonal = t.is_personal === true || ["personal", "crypto"].some(k => cl.includes(k))
 
-      if (isTransfer || isPersonal) return
+      if (isTransfer || isPersonal || t.exclude === true) return
       if (t.isIncome) months[mn].revenue += t.amount
       else months[mn].expenses += t.amount
     })
@@ -295,7 +301,7 @@ export function InteractiveReports({
   const exportCSV = useCallback(() => {
     const rows = [["Date", "Description", "Amount", "Category", "Type", "Account", "Schedule C Line"]]
     transactions.forEach(t => {
-      if (isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal })) return
+      if (isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal, exclude: t.exclude })) return
       const scheduleLine = formatScheduleCLine(t.category)
       rows.push([
         t.date, `"${t.description}"`, t.amount.toFixed(2), t.category,
@@ -356,7 +362,7 @@ export function InteractiveReports({
       ["Date", "Description", "Amount", "Category", "Schedule C Line", "Type", "Account"],
     ]
     transactions
-      .filter((t) => !isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal }))
+      .filter((t) => !isExcludedFromScheduleCExport(t.category, { isTransfer: t.is_transfer, isPersonal: t.is_personal, exclude: t.exclude }))
       .sort((a, b) => a.date.localeCompare(b.date))
       .forEach(t => {
         const sc = getScheduleCLineForCategory(t.category)
@@ -542,13 +548,16 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
       c.includes("credit card payment") ||
       c.includes("member drawing") ||
       c.includes("member contribution") ||
+      c.includes("owner's contribution") ||
+      c.includes("loan proceeds") ||
       c.includes("owner draw") ||
       c.includes("internal transfer") ||
       c.includes("zelle / venmo transfer") ||
       c.includes("brokerage transfer") ||
       c.includes("business treasury") ||
       c.includes("crypto / investments")
-    return { isIncome, is_personal, is_transfer }
+    const exclude = category === "Owner's Contribution" || category === "Loan Proceeds"
+    return { isIncome, is_personal, is_transfer, exclude }
   }, [])
 
   // Render a category row with expandable transaction list
@@ -630,7 +639,7 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
                   disabled={!normalizedBulkCategory || normalizedBulkCategory === cat}
                   onClick={async () => {
                     const toCategory = normalizedBulkCategory
-                    const { isIncome, is_personal, is_transfer } = inferFromCategory(toCategory)
+                    const { isIncome, is_personal, is_transfer, exclude } = inferFromCategory(toCategory)
                     const updates = data.transactions.map((tx) => ({
                       id: tx.id,
                       updates: {
@@ -638,7 +647,8 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
                         isIncome,
                         is_personal,
                         is_transfer,
-                        categorized_by: "user",
+                        exclude,
+                        categorized_by: "user" as const,
                         confidence: 1,
                       },
                     }))
@@ -750,12 +760,13 @@ Generated by DIY Bench.io &bull; ${new Date().toLocaleDateString()} &bull; This 
                         type="select"
                         options={TRANSACTION_CATEGORIES}
                         onSave={(value) => {
-                          const { isIncome, is_personal, is_transfer } = inferFromCategory(value)
+                          const { isIncome, is_personal, is_transfer, exclude } = inferFromCategory(value)
                           void onUpdateTransaction(t.id, {
                             category: value,
                             isIncome,
                             is_personal,
                             is_transfer,
+                            exclude,
                             categorized_by: "user",
                             confidence: 1,
                           })

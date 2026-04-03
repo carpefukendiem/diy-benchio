@@ -4,14 +4,17 @@
  */
 export function isExcludedFromScheduleCExport(
   category: string,
-  opts?: { isTransfer?: boolean; isPersonal?: boolean }
+  opts?: { isTransfer?: boolean; isPersonal?: boolean; exclude?: boolean }
 ): boolean {
+  if (opts?.exclude === true) return true
   if (opts?.isTransfer === true) return true
   if (opts?.isPersonal === true) return true
   const c = (category || "").toLowerCase()
   const substringMatches = [
     "member drawing",
     "member contribution",
+    "owner's contribution",
+    "loan proceeds",
     "owner draw",
     "credit card payment",
     "crypto / investments",
