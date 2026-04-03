@@ -1721,7 +1721,25 @@ export function InteractiveTransactionsList({
           {selectedTransactions.size > 0 && (
             <div className="flex flex-wrap items-center gap-4 p-3 bg-accent rounded-lg border">
               <span className="text-sm font-medium">{selectedTransactions.size} selected</span>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">
+                  <span className="text-xs text-muted-foreground">Category</span>
+                  <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                    <SelectTrigger className="min-h-10 h-auto text-xs text-left [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:break-words">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button size="sm" onClick={() => handleBulkCategoryUpdate(bulkCategory)}>
+                  Apply to Selected
+                </Button>
                 <Button size="sm" onClick={selectAllVisible}>
                   Select All Visible
                 </Button>
@@ -1730,7 +1748,7 @@ export function InteractiveTransactionsList({
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setBulkEditMode(!bulkEditMode)}>
                   <Edit3 className="h-4 w-4 mr-2" />
-                  Bulk Edit
+                  More actions
                 </Button>
                 {businessAccounts.length > 0 && (
                   <>
@@ -1761,30 +1779,6 @@ export function InteractiveTransactionsList({
           {/* Bulk Edit Panel */}
           {bulkEditMode && selectedTransactions.size > 0 && (
             <div className="p-4 bg-muted rounded-lg border space-y-4">
-              <div>
-                <h4 className="font-medium mb-3">Bulk update category</h4>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">
-                    <span className="text-xs text-muted-foreground">Category</span>
-                    <Select value={bulkCategory} onValueChange={setBulkCategory}>
-                      <SelectTrigger className="min-h-10 h-auto text-xs text-left [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:break-words">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-72">
-                        {CATEGORIES.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button size="sm" onClick={() => handleBulkCategoryUpdate(bulkCategory)}>
-                    Apply to {selectedTransactions.size} selected
-                  </Button>
-                </div>
-              </div>
-
               <div className="border-t pt-3">
                 <h4 className="font-medium mb-3">Bulk move account</h4>
                 <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-xl">

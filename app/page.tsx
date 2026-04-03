@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -198,6 +198,9 @@ export default function CaliforniaBusinessAccounting() {
   } | null>(null)
   const { toast } = useToast()
 
+  // Retroactive rule fixes that should apply once per dataset load.
+  const didAmazonRetroFixRef = useRef(false)
+
   const [activeTab, setActiveTab] = useState("statements")
 
   const markDirty = useCallback((ids: string[]) => {
@@ -259,6 +262,54 @@ export default function CaliforniaBusinessAccounting() {
     }
     setIsHydrated(true)
   }, [])
+
+  // On load: if any existing rows were previously categorized as "Personal - Entertainment"
+  // but look like Amazon purchases, move them to "Software & Web Hosting Expense".
+  useEffect(() => {
+    if (!isHydrated || !currentBusiness || !currentBusinessId) return
+    if (didAmazonRetroFixRef.current) return
+    didAmazonRetroFixRef.current = true
+
+    const amazonRe = /\bamzn\b|\bamazon\b|amazon\.com|amazon web services|\baws\b/i
+    const targetCategory = "Personal - Entertainment"
+    const newCategory = "Software & Web Hosting Expense"
+
+    let updated = 0
+    setBusinesses((prev) =>
+      prev.map((b) => {
+        if (b.id !== currentBusinessId) return b
+        const txs = b.transactions.map((t) => {
+          const cat = (t.category || "").trim()
+          const isPersonalEntertainment = cat === targetCategory
+          if (!isPersonalEntertainment) return t
+
+          const text = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase()
+          if (!amazonRe.test(text)) return t
+
+          updated++
+          return {
+            ...t,
+            category: newCategory,
+            isIncome: false,
+            is_personal: false,
+            is_transfer: false,
+            exclude: false,
+            categorized_by: "rule" as const,
+            confidence: 0.99,
+          }
+        })
+
+        return { ...b, transactions: txs }
+      }),
+    )
+
+    if (updated > 0) {
+      toast({
+        title: "Amazon recategorization applied",
+        description: `Updated ${updated} transaction(s) from "${targetCategory}" to "${newCategory}".`,
+      })
+    }
+  }, [isHydrated, currentBusiness, currentBusinessId, toast])
 
   // Debounced save to localStorage
   useEffect(() => {

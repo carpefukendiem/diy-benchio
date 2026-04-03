@@ -969,6 +969,13 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'transfer from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'zelle payment from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'zelle from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+
+  // --- Amazon purchases (permanent rule) → Software & Web Hosting (not income) ---
+  { pattern: 'amzn', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'amazon.com', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'amazon web services', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: '\\bamazon\\b', match: 'regex', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: '\\baws\\b', match: 'regex', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // --- Income (Schedule C Line 1) ---
   // Fees must win before generic Stripe transfer/payout income patterns.
   { pattern: 'stripe fee', category_id: '00000000-0000-0000-0002-000000000005', is_personal: false, is_transfer: false },
