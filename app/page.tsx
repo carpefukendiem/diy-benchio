@@ -198,8 +198,8 @@ export default function CaliforniaBusinessAccounting() {
   } | null>(null)
   const { toast } = useToast()
 
-  // Retroactive rule fixes that should apply once per dataset load.
-  const didAmazonRetroFixRef = useRef(false)
+  // Retroactive rule fixes should apply once per business dataset.
+  const amazonRetroFixedBusinessIdsRef = useRef<Set<string>>(new Set())
 
   const [activeTab, setActiveTab] = useState("statements")
 
@@ -267,8 +267,8 @@ export default function CaliforniaBusinessAccounting() {
   // but look like Amazon purchases, move them to "Software & Web Hosting Expense".
   useEffect(() => {
     if (!isHydrated || !currentBusiness || !currentBusinessId) return
-    if (didAmazonRetroFixRef.current) return
-    didAmazonRetroFixRef.current = true
+    if (amazonRetroFixedBusinessIdsRef.current.has(currentBusinessId)) return
+    amazonRetroFixedBusinessIdsRef.current.add(currentBusinessId)
 
     const amazonRe = /\bamzn\b|\bamazon\b|amazon\.com|amazon web services|\baws\b/i
     const targetCategory = "Personal - Entertainment"
