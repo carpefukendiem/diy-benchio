@@ -498,6 +498,11 @@ function parsePDFText(text: string) {
 // Columns: "MM/DD/YYYY","signed_amount","*","",description
 // Positive amount = credit; negative = debit.
 // ========================================
+function stripUtf8Bom(text: string): string {
+  if (text.charCodeAt(0) === 0xfeff) return text.slice(1)
+  return text
+}
+
 function splitCsvFields(line: string): string[] {
   const fields: string[] = []
   let cur = ""
@@ -538,7 +543,15 @@ function splitCsvFields(line: string): string[] {
   return fields.map((f) => f.replace(/^"|"$/g, ""))
 }
 
-const WF_BIZ_CSV_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+// Allow 2- or 4-digit year (some exports use MM/DD/YY)
+const WF_BIZ_CSV_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/
+
+function normalizeWfBizYear(y: string): string {
+  if (y.length === 4) return y
+  const n = parseInt(y, 10)
+  if (!Number.isFinite(n)) return y
+  return n >= 70 ? `19${y}` : `20${y.padStart(2, "0")}`
+}
 
 function rowLooksLikeWellsFargoBusinessCsv(parts: string[]): boolean {
   if (parts.length < 5) return false
@@ -549,6 +562,7 @@ function rowLooksLikeWellsFargoBusinessCsv(parts: string[]): boolean {
 }
 
 function parseWellsFargoBusinessCSV(csvText: string) {
+  csvText = stripUtf8Bom(csvText)
   const rawLines = csvText.split(/\r?\n/)
   const txns: any[] = []
 
@@ -562,7 +576,7 @@ function parseWellsFargoBusinessCSV(csvText: string) {
     if (!dm) continue
     const mo = dm[1].padStart(2, "0")
     const da = dm[2].padStart(2, "0")
-    const yr = dm[3]
+    const yr = normalizeWfBizYear(dm[3])
 
     const signed = parseFloat(parts[1].replace(/,/g, ""))
     if (!Number.isFinite(signed) || signed === 0) continue
@@ -620,10 +634,25 @@ function parseWellsFargoBusinessCSV(csvText: string) {
 //   3. Chase CSV (Transaction Date, Post Date, Description, Category, Type, Amount)
 // ========================================
 function parseCSVText(csvText: string) {
-  const rawLines = csvText.split("\n")
+  csvText = stripUtf8Bom(csvText)
+  const rawLines = csvText.split(/\r?\n/)
 
   // ------- Detect format -------
   const firstNonEmpty = rawLines.find(l => l.trim().length > 0) || ""
+
+  // Wells Fargo Business Checking CSV: quoted fields, col0 = date, col1 = signed amount, no header.
+  // Must run before WF text-export heuristic — that pattern expects a bare "M/D " start, not a leading quote.
+  if (firstNonEmpty.includes(",")) {
+    try {
+      const probe = splitCsvFields(firstNonEmpty.trim())
+      if (rowLooksLikeWellsFargoBusinessCsv(probe)) {
+        console.log("[csv] Detected Wells Fargo Business Checking CSV (quoted export)")
+        return parseWellsFargoBusinessCSV(csvText)
+      }
+    } catch {
+      /* ignore probe errors */
+    }
+  }
 
   // FORMAT 1: Standard CSV with comma-separated headers
   if (firstNonEmpty.includes(",") && /date/i.test(firstNonEmpty)) {
@@ -916,7 +945,7 @@ async function processStatementBuffer(params: {
       `[upload] PDF parsed: ${parsed.transactions?.length ?? 0} txns for ${parsed.statementMonth} ${parsed.statementYear}`
     )
   } else {
-    const csvText = buffer.toString("utf-8")
+    const csvText = stripUtf8Bom(buffer.toString("utf-8"))
     if (accountType === "wf_business_csv") {
       parsed = parseWellsFargoBusinessCSV(csvText)
       console.log(`[upload] WF Business CSV parsed: ${parsed.transactions?.length ?? 0} txns`)
