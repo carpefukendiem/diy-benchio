@@ -18,7 +18,12 @@ import {
   Download,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { formatScheduleCLine, getDeductibleAmountForExpense, getScheduleCLineForCategory } from "@/lib/tax/treatment"
+import {
+  formatScheduleCLine,
+  getDeductibleAmountForExpense,
+  getScheduleCLineForCategory,
+  computeUiExpenseTotals,
+} from "@/lib/tax/treatment"
 import { isExcludedFromScheduleCExport } from "@/lib/tax/scheduleCExportFilter"
 import type { LedgerTaxEstimate } from "@/lib/tax/taxEstimate"
 import { EditableCell } from "@/components/editable-cell"
@@ -263,13 +268,6 @@ export function InteractiveReports({
   const totalOperatingExpenses = expenseItems.reduce((s, [, d]) => s + d.amount, 0)
   const totalAboveTheLine = aboveTheLineItems.reduce((s, [, d]) => s + d.amount, 0)
   const totalExpenses = totalCOGS + totalOperatingExpenses
-  // Calculate actual deductible amount (meals at 50%)
-  const totalDeductible = expenseItems.reduce((s, [cat, d]) => {
-    const pct = SCHEDULE_C_LINES[cat]?.deductPct
-    return s + (pct ? d.amount * (pct / 100) : d.amount)
-  }, 0) + totalCOGS
-  /** Schedule C Line 31 — meals at 50%, excludes uncategorized until you categorize them */
-  const scheduleCNetProfit = totalRevenue - totalDeductible
   /** Book P&amp;L before meal limitation (operating expenses at gross amounts) */
   const netIncomeBook = totalRevenue - totalExpenses
   // For backward compat in existing exports
@@ -305,10 +303,41 @@ export function InteractiveReports({
       .sort((a, b) => b.gross - a.gross)
   }, [expenseItems])
 
-  /** Operating expenses on a Schedule C–congruent basis (includes uncategorized at face amount). */
+  /** Merchant / commissions — Bench-style Cost of Sales, not Operating Expenses. */
+  const MERCHANT_COST_OF_SALES_LABEL = "Merchant Processing Fees"
+
+  const merchantCostOfSalesRow = useMemo(
+    () => mergedStatementExpenses.find((r) => r.displayCategory === MERCHANT_COST_OF_SALES_LABEL),
+    [mergedStatementExpenses],
+  )
+
+  const mergedOperatingExpenseRowsOnly = useMemo(
+    () => mergedStatementExpenses.filter((r) => r.displayCategory !== MERCHANT_COST_OF_SALES_LABEL),
+    [mergedStatementExpenses],
+  )
+
+  const totalCostOfSalesPL = totalCOGS + (merchantCostOfSalesRow?.deductible ?? 0)
+  const grossProfitPL = totalRevenue - totalCostOfSalesPL
+
+  const uncategorizedOperatingTotal = uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0)
+
+  /**
+   * Operating subtotal (Schedule C–style amounts; meals at 50%). Excludes merchant (in COS).
+   * Uncategorized amounts are listed in the UI but omitted here so totals match Schedule C until categorized.
+   */
   const mergedOperatingScheduleCSubtotal =
-    mergedStatementExpenses.reduce((s, r) => s + r.deductible, 0) +
-    uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0)
+    mergedOperatingExpenseRowsOnly.reduce((s, r) => s + r.deductible, 0)
+
+  /** P&amp;L: COS + operating — never health insurance / Schedule 1; never uncategorized. */
+  const totalStatementExpenses = totalCostOfSalesPL + mergedOperatingScheduleCSubtotal
+
+  const { schedCDeductions } = useMemo(() => computeUiExpenseTotals(transactions), [transactions])
+
+  /** Net profit; ties to Total Revenues − Total Expenses on this statement. */
+  const scheduleCNetProfit = totalRevenue - totalStatementExpenses
+
+  /** Alias for spreadsheet summary (matches `computeUiExpenseTotals`). */
+  const totalDeductible = schedCDeductions
 
   // Monthly trends data
   const monthlyData = useMemo(() => {
@@ -397,13 +426,18 @@ export function InteractiveReports({
     })
 
     summaryRows.push([""])
+    summaryRows.push(["INCOME STATEMENT SUMMARY (P&L)"])
     summaryRows.push(["TOTAL REVENUES", "", totalRevenue.toFixed(2), "", ""])
-    if (totalCOGS > 0) summaryRows.push(["TOTAL COST OF SALES", "", totalCOGS.toFixed(2), "", ""])
-    summaryRows.push(["GROSS PROFIT", "", grossProfit.toFixed(2), "", ""])
-    summaryRows.push(["TOTAL OPERATING EXPENSES", "", totalOperatingExpenses.toFixed(2), totalDeductible.toFixed(2), ""])
-    if (totalAboveTheLine > 0) summaryRows.push(["ABOVE-THE-LINE DEDUCTIONS", "", totalAboveTheLine.toFixed(2), "", ""])
-    summaryRows.push(["TOTAL EXPENSES", "", (totalExpenses + totalAboveTheLine).toFixed(2), "", ""])
-    summaryRows.push(["NET PROFIT (Schedule C)", "", scheduleCNetProfit.toFixed(2), "", ""])
+    if (totalCostOfSalesPL > 0) summaryRows.push(["TOTAL COST OF SALES", "", totalCostOfSalesPL.toFixed(2), "", ""])
+    summaryRows.push(["GROSS PROFIT", "", grossProfitPL.toFixed(2), "", ""])
+    summaryRows.push(["TOTAL OPERATING EXPENSES", "", mergedOperatingScheduleCSubtotal.toFixed(2), totalDeductible.toFixed(2), ""])
+    summaryRows.push(["TOTAL EXPENSES (excl. Schedule 1)", "", totalStatementExpenses.toFixed(2), "", ""])
+    summaryRows.push(["NET PROFIT", "", scheduleCNetProfit.toFixed(2), "", ""])
+    if (totalAboveTheLine > 0) {
+      summaryRows.push([""])
+      summaryRows.push(["SCHEDULE 1 (ABOVE THE LINE) — NOT ON P&L TOTALS"])
+      summaryRows.push(["TOTAL ABOVE-THE-LINE DEDUCTIONS", "", totalAboveTheLine.toFixed(2), "", ""])
+    }
 
     // Transaction detail sheet
     const txRows = [
@@ -434,163 +468,98 @@ export function InteractiveReports({
     a.click()
     URL.revokeObjectURL(url)
     toast({ title: "Exported for Google Sheets", description: "Open Google Sheets → File → Import → Upload the .tsv file" })
-  }, [expenseItems, totalRevenue, totalCOGS, grossProfit, totalOperatingExpenses, totalAboveTheLine, totalExpenses, totalDeductible, scheduleCNetProfit, transactions, dateRange, toast])
+  }, [
+    expenseItems,
+    totalRevenue,
+    totalCostOfSalesPL,
+    grossProfitPL,
+    mergedOperatingScheduleCSubtotal,
+    totalAboveTheLine,
+    totalStatementExpenses,
+    totalDeductible,
+    scheduleCNetProfit,
+    transactions,
+    dateRange,
+    toast,
+  ])
 
-  // Client-side PDF — bench.io Income Statement format
+  /** Minimal Bench-style P&amp;L HTML only (no tax panel, no Schedule C annotations). */
   const exportPDF = useCallback(() => {
     const fmtAmt = (n: number) => {
       const abs = Math.abs(n)
-      const str = abs.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      return n < 0 ? `-${str}` : str
+      const str = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return n < 0 ? `(${str})` : str
     }
     const year = dateRange.start.slice(0, 4)
+    const footerDate = new Date().toLocaleDateString("en-US")
+    const hasCostOfSales = totalCostOfSalesPL > 0
 
-    const te = ledgerTaxEstimate
-    const taxEstimateSection =
-      te != null
-        ? `
-<div class="sched-c" style="margin-top: 20px;">
-<h3>Tax Estimation Summary</h3>
-<table>
-<tr><td class="label">Gross revenue</td><td class="amt val">${fmtAmt(te.grossRevenue)}</td></tr>
-<tr><td class="label">Total Schedule C deductions</td><td class="amt val">${fmtAmt(te.scheduleCTotalDeductions)}</td></tr>
-<tr><td class="label">Net profit (Schedule C)</td><td class="amt val">${fmtAmt(te.netProfitScheduleC)}</td></tr>
-<tr><td colspan="2" style="height:8px"></td></tr>
-<tr><td class="label">Self-employment tax</td><td class="amt val">${fmtAmt(te.selfEmploymentTax)}</td></tr>
-<tr><td class="label">One-half SE tax deduction (Schedule 1)</td><td class="amt val">(${fmtAmt(te.halfSETaxDeduction)})</td></tr>
-<tr><td class="label">Health insurance (Schedule 1 Line 17)</td><td class="amt val">(${fmtAmt(te.healthInsuranceDeduction)})</td></tr>
-<tr><td class="label">Adjusted gross income</td><td class="amt val">${fmtAmt(te.adjustedGrossIncome)}</td></tr>
-<tr><td class="label">Federal standard deduction</td><td class="amt val">(${fmtAmt(te.federalStandardDeduction)})</td></tr>
-<tr><td class="label">Federal taxable income (after QBI)</td><td class="amt val">${fmtAmt(te.taxableIncomeFederal)}</td></tr>
-<tr><td colspan="2" style="height:8px"></td></tr>
-<tr><td class="label">Federal income tax</td><td class="amt val">${fmtAmt(te.federalIncomeTax)}</td></tr>
-<tr><td class="label">California income tax</td><td class="amt val">${fmtAmt(te.californiaIncomeTax)}</td></tr>
-${caLLCFee > 0 ? `<tr><td class="label">California LLC / franchise (if applicable)</td><td class="amt val">${fmtAmt(caLLCFee)}</td></tr>` : ""}
-<tr><td class="label"><strong>Total estimated tax owed</strong></td><td class="amt val"><strong>${fmtAmt(te.totalEstimatedTaxOwed + caLLCFee)}</strong></td></tr>
-<tr><td colspan="2" style="height:8px"></td></tr>
-<tr><td class="label">SEP-IRA max deferral (25% of net, cap $70,000)</td><td class="amt val">${fmtAmt(te.sepIraMaxDeferral)}</td></tr>
-<tr><td class="label">Estimated federal tax saved if max SEP (planning)</td><td class="amt val">${fmtAmt(te.estimatedFederalTaxSavedIfMaxSep)}</td></tr>
-</table>
-</div>`
-        : ""
+    const cosRows = [
+      ...cogsItems.map(([cat, data]) => `<tr><td class="ind">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`),
+      ...(merchantCostOfSalesRow
+        ? [
+            `<tr><td class="ind">${MERCHANT_COST_OF_SALES_LABEL}</td><td class="amt">${fmtAmt(merchantCostOfSalesRow.deductible)}</td></tr>`,
+          ]
+        : []),
+    ].join("")
 
-    const printContent = `
-<!DOCTYPE html><html><head><style>
-@page { margin: 0.6in 0.75in; size: letter; }
-body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 40px 50px; font-size: 10.5px; color: #1a1a1a; line-height: 1.5; }
-.header { text-align: center; margin-bottom: 24px; }
-.header h1 { font-size: 20px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.3px; }
-.header h2 { font-size: 13px; font-weight: 400; color: #555; margin: 0 0 4px; }
-.header .period { font-size: 11px; color: #888; }
-.header .year-label { display: inline-block; background: #f0f0f0; border-radius: 3px; padding: 2px 10px; font-size: 10px; font-weight: 600; color: #555; margin-top: 6px; }
-table { width: 100%; border-collapse: collapse; margin: 0; }
-td, th { padding: 4px 0; vertical-align: top; }
-.cat-name { padding-left: 16px; }
-.section-header td { font-weight: 700; font-size: 11px; padding-top: 14px; padding-bottom: 4px; border-bottom: 1px solid #ccc; }
-.subtotal td { font-weight: 600; padding-top: 6px; border-top: 1px solid #ddd; }
-.grand-total td { font-weight: 700; font-size: 11.5px; padding-top: 8px; border-top: 2px solid #333; }
-.amt { text-align: right; font-variant-numeric: tabular-nums; font-family: 'Courier New', monospace; font-size: 10.5px; white-space: nowrap; }
-.light { color: #888; }
-.section-gap td { padding: 4px 0; }
-.footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 8.5px; color: #aaa; text-align: center; }
-.sched-c { margin-top: 24px; padding: 12px 16px; background: #f7f9fc; border: 1px solid #e0e4ea; border-radius: 4px; }
-.sched-c h3 { font-size: 12px; margin: 0 0 8px; font-weight: 700; }
-.sched-c table td { padding: 3px 0; font-size: 10px; }
-.sched-c .label { color: #555; }
-.sched-c .val { font-weight: 600; }
+    const opRows = mergedOperatingExpenseRowsOnly
+      .map(
+        (row) =>
+          `<tr><td class="ind">${row.displayCategory}</td><td class="amt">${fmtAmt(row.deductible)}</td></tr>`,
+      )
+      .join("")
+
+    const printContent = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+@page { margin: 0.75in 0.85in; size: letter; }
+body { font-family: Helvetica, Arial, sans-serif; margin: 0; padding: 0; font-size: 11px; color: #000; line-height: 1.35; }
+.hdr { text-align: center; margin-bottom: 28px; }
+.co { font-size: 15px; font-weight: 700; margin: 0 0 6px; }
+.ti { font-size: 12px; font-weight: 400; margin: 0 0 2px; }
+.per { font-size: 11px; margin: 0; }
+table.pl { width: 100%; border-collapse: collapse; }
+.pl td { padding: 3px 0; vertical-align: baseline; }
+.pl td.amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 12px; }
+.pl td.ind { padding-left: 18px; }
+.sec td { font-weight: 700; padding-top: 14px; padding-bottom: 4px; border-bottom: 1px solid #000; }
+.sub td { font-weight: 600; padding-top: 8px; border-top: 1px solid #bbb; }
+.tot td { font-weight: 700; padding-top: 10px; border-top: 2px solid #000; font-size: 11px; }
+.sp td { height: 10px; padding: 0; border: none; }
+.ftr { margin-top: 36px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 9px; color: #333; text-align: center; }
 </style></head><body>
-
-<div class="header">
-<h1>${businessName}</h1>
-<h2>Annual Income Statement</h2>
-<div class="period">For the period ${year}</div>
-<div class="year-label">Tax Year ${year}</div>
+<div class="hdr">
+<div class="co">${businessName}</div>
+<div class="ti">Annual Income Statement</div>
+<p class="per">For the period ${year}</p>
 </div>
-
-<table>
-
-<!-- REVENUES -->
-<tr class="section-header"><td colspan="2">Revenues</td></tr>
-${revenueItems.map(([cat, data]) => `<tr><td class="cat-name">${revenueRowLabel(cat)}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
-${returnsItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(-data.amount)}</td></tr>`).join("")}
-<tr class="subtotal"><td>Total Revenues</td><td class="amt">${fmtAmt(totalRevenue)}</td></tr>
-
-<!-- COST OF SALES -->
-${cogsItems.length > 0 ? `
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="section-header"><td colspan="2">Cost of Sales</td></tr>
-${cogsItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
-<tr class="subtotal"><td>Total Cost of Sales</td><td class="amt">${fmtAmt(totalCOGS)}</td></tr>
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="subtotal"><td><strong>Gross Profit</strong></td><td class="amt"><strong>${fmtAmt(grossProfit)}</strong></td></tr>
-` : `<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="subtotal"><td><strong>Gross Profit</strong></td><td class="amt"><strong>${fmtAmt(grossProfit)}</strong></td></tr>`}
-
-<!-- OPERATING EXPENSES (Schedule C–congruent; soccer merged into advertising; merchant fee lines combined) -->
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="section-header"><td colspan="2">Operating Expenses</td></tr>
-${uncategorizedItems.length > 0 ? `<tr><td class="cat-name">Uncategorized Expense</td><td class="amt">${fmtAmt(uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0))}</td></tr>` : ""}
-${mergedStatementExpenses
-  .map((row) => {
-    const sc = SCHEDULE_C_LINES[row.displayCategory]
-    const lineNote = sc ? ` <span class="light">Line ${sc.line}</span>` : ""
-    if (row.isMeals) {
-      return `<tr><td class="cat-name">Business Meals Expense${lineNote} <span class="light">(50% deductible; gross ${fmtAmt(row.gross)})</span></td><td class="amt">${fmtAmt(row.deductible)}</td></tr>`
-    }
-    return `<tr><td class="cat-name">${row.displayCategory}${lineNote}</td><td class="amt">${fmtAmt(row.deductible)}</td></tr>`
-  })
-  .join("")}
-${nondeductibleItems.map(([cat, data]) => `<tr><td class="cat-name">${cat}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
-<tr class="subtotal"><td>Total Operating Expenses (Schedule C basis)</td><td class="amt">${fmtAmt(mergedOperatingScheduleCSubtotal)}</td></tr>
-
-<!-- ABOVE-THE-LINE DEDUCTIONS (not on Schedule C) -->
-${aboveTheLineItems.length > 0 ? `
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="section-header"><td colspan="2">Above-the-Line Deductions (Schedule 1)</td></tr>
-${aboveTheLineItems.map(([cat, data]) => {
-    const sc = getScheduleCLineForCategory(cat)
-    return `<tr><td class="cat-name">${cat} <span class="light">${sc ? `(${sc.label})` : ""}</span></td><td class="amt">${fmtAmt(data.amount)}</td></tr>`
-  }).join("")}
-<tr class="subtotal"><td>Total Above-the-Line</td><td class="amt">${fmtAmt(totalAboveTheLine)}</td></tr>
-` : ""}
-
-<!-- TOTAL EXPENSES -->
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="subtotal"><td>Total Expenses</td><td class="amt">${fmtAmt(totalExpenses + totalAboveTheLine + uncategorizedItems.reduce((s, [, d]) => s + d.amount, 0) + nondeductibleItems.reduce((s, [, d]) => s + d.amount, 0))}</td></tr>
-
-<!-- NET PROFIT -->
-<tr class="section-gap"><td colspan="2"></td></tr>
-<tr class="grand-total"><td>Net Profit (Schedule C Line 31)</td><td class="amt">${fmtAmt(scheduleCNetProfit)}</td></tr>
+<table class="pl" role="presentation">
+<tr class="sec"><td>Revenues</td><td></td></tr>
+${revenueItems.map(([cat, data]) => `<tr><td class="ind">${revenueRowLabel(cat)}</td><td class="amt">${fmtAmt(data.amount)}</td></tr>`).join("")}
+${returnsItems.map(([cat, data]) => `<tr><td class="ind">${cat}</td><td class="amt">${fmtAmt(-data.amount)}</td></tr>`).join("")}
+<tr class="sub"><td>Total Revenues</td><td class="amt">${fmtAmt(totalRevenue)}</td></tr>
+${
+  hasCostOfSales
+    ? `<tr class="sp"><td colspan="2"></td></tr>
+<tr class="sec"><td>Cost of Sales</td><td></td></tr>
+${cosRows}
+<tr class="sub"><td>Total Cost of Sales</td><td class="amt">${fmtAmt(totalCostOfSalesPL)}</td></tr>`
+    : ""
+}
+<tr class="sp"><td colspan="2"></td></tr>
+<tr class="sub"><td>Gross Profit</td><td class="amt">${fmtAmt(grossProfitPL)}</td></tr>
+<tr class="sp"><td colspan="2"></td></tr>
+<tr class="sec"><td>Operating Expenses</td><td></td></tr>
+${opRows}
+<tr class="sub"><td>Total Operating Expenses</td><td class="amt">${fmtAmt(mergedOperatingScheduleCSubtotal)}</td></tr>
+<tr class="sp"><td colspan="2"></td></tr>
+<tr class="sub"><td>Total Expenses</td><td class="amt">${fmtAmt(totalStatementExpenses)}</td></tr>
+<tr class="sp"><td colspan="2"></td></tr>
+<tr class="tot"><td>Net Profit</td><td class="amt">${fmtAmt(scheduleCNetProfit)}</td></tr>
 </table>
-
-${taxEstimateSection}
-
-${capitalItems.length > 0 ? `
-<div class="sched-c" style="margin-top: 24px; background: #f7f9fc; border-color: #e0e4ea;">
-<h3>Capital &amp; Financing (Not on Schedule C)</h3>
-<table>
-${capitalItems.map(([cat, data]) => {
-  return `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr>`
-}).join("")}
-</table>
-</div>` : ""}
-
-${personalItems.length > 0 || transferItems.length > 0 ? `
-<div class="sched-c" style="margin-top: 24px; background: #f9f9f9;">
-<h3>Non-Business Items (Not on Schedule C)</h3>
-<table>
-${personalItems.map(([cat, data]) => `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr>`).join("")}
-${transferItems.map(([cat, data]) => `<tr><td class="label">${cat}</td><td class="amt val">${fmtAmt(data.amount)}</td></tr>`).join("")}
-</table>
-</div>` : ""}
-
-<div class="footer">
-DIY Bench.io &bull; ${new Date().toLocaleDateString()}
-</div>
+<div class="ftr">DIY Bench.io • ${footerDate} • This is not tax advice.</div>
 </body></html>`
 
-    // Create downloadable HTML file
-    const blob = new Blob([printContent], { type: "text/html" })
+    const blob = new Blob([printContent], { type: "text/html;charset=utf-8" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
@@ -598,42 +567,103 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
     a.click()
     URL.revokeObjectURL(url)
 
-    // Also try opening for print
     try {
       const printWindow = window.open("", "_blank")
       if (printWindow) {
         printWindow.document.write(printContent)
         printWindow.document.close()
-        setTimeout(() => { printWindow.print() }, 500)
+        setTimeout(() => {
+          printWindow.print()
+        }, 400)
       }
-    } catch {}
+    } catch {
+      /* ignore */
+    }
 
-    toast({ title: "Income Statement Downloaded", description: "Open the HTML file, then use File -> Print -> Save as PDF for a clean PDF." })
+    toast({ title: "Income Statement downloaded", description: "HTML file — use Print → Save as PDF if needed." })
   }, [
     revenueItems,
     returnsItems,
     cogsItems,
-    expenseItems,
-    aboveTheLineItems,
-    personalItems,
-    transferItems,
-    uncategorizedItems,
-    nondeductibleItems,
-    capitalItems,
-    mergedStatementExpenses,
+    merchantCostOfSalesRow,
+    mergedOperatingExpenseRowsOnly,
     mergedOperatingScheduleCSubtotal,
     totalRevenue,
-    totalCOGS,
-    grossProfit,
-    totalAboveTheLine,
-    totalExpenses,
+    totalCostOfSalesPL,
+    grossProfitPL,
+    totalStatementExpenses,
     scheduleCNetProfit,
     dateRange,
     businessName,
-    ledgerTaxEstimate,
-    caLLCFee,
     toast,
   ])
+
+  /** Internal tax planning — separate from the P&amp;L export. */
+  const exportTaxSummary = useCallback(() => {
+    const te = ledgerTaxEstimate
+    if (te == null) {
+      toast({
+        title: "Tax Summary unavailable",
+        description: "Open the dashboard with transactions loaded so the tax estimate can run, then try again.",
+        variant: "destructive",
+      })
+      return
+    }
+    const fmtAmt = (n: number) => {
+      const abs = Math.abs(n)
+      const str = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return n < 0 ? `(${str})` : str
+    }
+    const year = dateRange.start.slice(0, 4)
+    const footerDate = new Date().toLocaleDateString("en-US")
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tax Summary ${year}</title><style>
+@page { margin: 0.75in 0.85in; size: letter; }
+body { font-family: Helvetica, Arial, sans-serif; margin: 0; padding: 0; font-size: 11px; color: #000; line-height: 1.4; }
+.hdr { text-align: center; margin-bottom: 24px; }
+.co { font-size: 15px; font-weight: 700; margin: 0 0 6px; }
+.ti { font-size: 12px; margin: 0; }
+.per { font-size: 11px; margin: 4px 0 0; }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 4px 0; vertical-align: top; }
+td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 16px; }
+tr.div td { padding-top: 10px; }
+.ftr { margin-top: 32px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 9px; text-align: center; color: #333; }
+</style></head><body>
+<div class="hdr">
+<div class="co">${businessName}</div>
+<div class="ti">Tax Summary</div>
+<p class="per">For the period ${year} • Filing status: ${te.filingStatus === "married_joint" ? "Married filing jointly" : "Single"}</p>
+</div>
+<table role="presentation">
+<tr><td>Gross revenue</td><td class="amt">${fmtAmt(te.grossRevenue)}</td></tr>
+<tr><td>Total Schedule C deductions</td><td class="amt">${fmtAmt(te.scheduleCTotalDeductions)}</td></tr>
+<tr><td>Net profit (Schedule C)</td><td class="amt">${fmtAmt(te.netProfitScheduleC)}</td></tr>
+<tr class="div"><td>Self-employment tax</td><td class="amt">${fmtAmt(te.selfEmploymentTax)}</td></tr>
+<tr><td>One-half SE tax deduction (Schedule 1)</td><td class="amt">${fmtAmt(te.halfSETaxDeduction)}</td></tr>
+<tr><td>Health insurance deduction (Schedule 1)</td><td class="amt">${fmtAmt(te.healthInsuranceDeduction)}</td></tr>
+<tr><td>Adjusted gross income</td><td class="amt">${fmtAmt(te.adjustedGrossIncome)}</td></tr>
+<tr><td>Federal standard deduction</td><td class="amt">${fmtAmt(te.federalStandardDeduction)}</td></tr>
+<tr><td>Federal taxable income (after QBI)</td><td class="amt">${fmtAmt(te.taxableIncomeFederal)}</td></tr>
+<tr class="div"><td>Federal income tax</td><td class="amt">${fmtAmt(te.federalIncomeTax)}</td></tr>
+<tr><td>California income tax</td><td class="amt">${fmtAmt(te.californiaIncomeTax)}</td></tr>
+${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAmt(caLLCFee)}</td></tr>` : ""}
+<tr class="div"><td><strong>Total estimated tax owed</strong></td><td class="amt"><strong>${fmtAmt(te.totalEstimatedTaxOwed + caLLCFee)}</strong></td></tr>
+<tr class="div"><td>SEP-IRA max deferral (planning)</td><td class="amt">${fmtAmt(te.sepIraMaxDeferral)}</td></tr>
+<tr><td>Estimated federal tax saved if max SEP</td><td class="amt">${fmtAmt(te.estimatedFederalTaxSavedIfMaxSep)}</td></tr>
+</table>
+<div class="ftr">DIY Bench.io • ${footerDate} • This is not tax advice.</div>
+</body></html>`
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${businessName.replace(/[^a-z0-9]/gi, "-")}-Tax-Summary-${year}.html`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast({ title: "Tax Summary downloaded", description: "Separate from the income statement — for internal planning." })
+  }, [ledgerTaxEstimate, businessName, dateRange, caLLCFee, toast])
 
   const inferFromCategory = useCallback((category: string) => {
     const revenueCategories = [
@@ -675,15 +705,19 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
     rowLabel,
     /** When set (e.g. merged meals row), main column shows this Schedule C amount; `data.amount` is gross. */
     primaryAmount,
+    /** Income Statement tab: hide Schedule C badges and meal annotations. */
+    plainIncomeStatement = false,
   }: {
     cat: string
     data: (typeof categoryTotals)[string]
     showLine?: boolean
     rowLabel?: string
     primaryAmount?: number
+    plainIncomeStatement?: boolean
   }) => {
     const title = rowLabel ?? cat
     const sc = SCHEDULE_C_LINES[cat]
+    const showScheduleMeta = showLine && !plainIncomeStatement
     const isExpanded = expandedCategory === cat
     const deductible = sc?.deductPct ? data.amount * (sc.deductPct / 100) : data.amount
     const summaryAmount = primaryAmount !== undefined ? primaryAmount : data.amount
@@ -703,7 +737,7 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
           <div className="flex items-center gap-2 flex-1 min-w-0">
             {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
             <span className="text-sm truncate">{title}</span>
-            {showLine && sc && (
+            {showScheduleMeta && sc && (
               <Badge variant="outline" className="text-[10px] flex-shrink-0">
                 Line {sc.line}
               </Badge>
@@ -716,12 +750,12 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
             <span className="font-mono font-medium text-sm">
               ${summaryAmount.toLocaleString("en", { minimumFractionDigits: 2 })}
             </span>
-            {sc?.deductPct && primaryAmount !== undefined && (
+            {!plainIncomeStatement && sc?.deductPct && primaryAmount !== undefined && (
               <span className="text-xs text-muted-foreground ml-2">
                 (50% deductible; gross ${data.amount.toLocaleString("en", { minimumFractionDigits: 2 })})
               </span>
             )}
-            {sc?.deductPct && primaryAmount === undefined && (
+            {!plainIncomeStatement && sc?.deductPct && primaryAmount === undefined && (
               <span className="text-xs text-muted-foreground ml-2">
                 ({sc.deductPct}% = ${deductible.toFixed(2)})
               </span>
@@ -937,7 +971,10 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
             <FileSpreadsheet className="h-4 w-4 mr-1" /> Google Sheets
           </Button>
           <Button size="sm" onClick={exportPDF}>
-            <FileText className="h-4 w-4 mr-1" /> Income Statement PDF
+            <FileText className="h-4 w-4 mr-1" /> Income Statement
+          </Button>
+          <Button variant="outline" size="sm" onClick={exportTaxSummary}>
+            <Download className="h-4 w-4 mr-1" /> Tax Summary
           </Button>
         </div>
       </div>
@@ -966,10 +1003,19 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
                   <p className="text-sm text-muted-foreground py-2">No revenue transactions</p>
                 ) : (
                   revenueItems.map(([cat, data]) => (
-                    <CategoryRow key={cat} cat={cat} data={data} rowLabel={revenueRowLabel(cat)} />
+                    <CategoryRow
+                      key={cat}
+                      cat={cat}
+                      data={data}
+                      rowLabel={revenueRowLabel(cat)}
+                      plainIncomeStatement
+                      showLine={false}
+                    />
                   ))
                 )}
-                {returnsItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
+                {returnsItems.map(([cat, data]) => (
+                  <CategoryRow key={cat} cat={cat} data={data} plainIncomeStatement showLine={false} />
+                ))}
                 <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
                   <span>Total Revenues</span>
                   <span className="font-mono">${totalRevenue.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
@@ -977,17 +1023,32 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
               </CardContent>
             </Card>
 
-            {/* Cost of Sales */}
-            {cogsItems.length > 0 && (
+            {/* Cost of Sales (COGS + merchant processing) */}
+            {totalCostOfSalesPL > 0 && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base font-bold">Cost of Sales</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  {cogsItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
+                  {cogsItems.map(([cat, data]) => (
+                    <CategoryRow key={cat} cat={cat} data={data} plainIncomeStatement showLine={false} />
+                  ))}
+                  {merchantCostOfSalesRow && (
+                    <CategoryRow
+                      cat={MERCHANT_COST_OF_SALES_LABEL}
+                      data={{
+                        amount: merchantCostOfSalesRow.gross,
+                        transactions: merchantCostOfSalesRow.transactions,
+                        isIncome: false,
+                      }}
+                      primaryAmount={merchantCostOfSalesRow.deductible}
+                      plainIncomeStatement
+                      showLine={false}
+                    />
+                  )}
                   <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
                     <span>Total Cost of Sales</span>
-                    <span className="font-mono">${totalCOGS.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                    <span className="font-mono">${totalCostOfSalesPL.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -998,7 +1059,7 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
               <CardContent className="py-3">
                 <div className="flex justify-between font-bold px-3">
                   <span>Gross Profit</span>
-                  <span className="font-mono">${grossProfit.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  <span className="font-mono">${grossProfitPL.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                 </div>
               </CardContent>
             </Card>
@@ -1008,19 +1069,31 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-bold">Operating Expenses</CardTitle>
                 <CardDescription>
-                  Soccer sponsorship and similar spend are included under Advertising &amp; Marketing; merchant fee lines are
-                  combined. Business meals show the Schedule C–allowable (50%) amount.
+                  Merchant processing is under Cost of Sales. Soccer sponsorship is included in Advertising &amp; Marketing.
+                  Amounts follow Schedule C rules (business meals at 50%).
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
-                {uncategorizedItems.length > 0 &&
-                  uncategorizedItems.map(([cat, data]) => (
-                    <CategoryRow key={cat} cat="Uncategorized Expense" data={data} showLine={false} />
-                  ))}
-                {mergedStatementExpenses.length === 0 && uncategorizedItems.length === 0 ? (
+                {uncategorizedItems.length > 0 && (
+                  <>
+                    {uncategorizedItems.map(([cat, data]) => (
+                      <CategoryRow
+                        key={cat}
+                        cat="Uncategorized Expense"
+                        data={data}
+                        showLine={false}
+                        plainIncomeStatement
+                      />
+                    ))}
+                    <p className="text-xs text-muted-foreground px-3 pb-2">
+                      Uncategorized transactions are not included in Total Expenses or Net Profit until categorized.
+                    </p>
+                  </>
+                )}
+                {mergedOperatingExpenseRowsOnly.length === 0 && uncategorizedItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-2">No categorized business expenses</p>
                 ) : (
-                  mergedStatementExpenses.map((row) => (
+                  mergedOperatingExpenseRowsOnly.map((row) => (
                     <CategoryRow
                       key={row.displayCategory}
                       cat={row.displayCategory}
@@ -1029,15 +1102,17 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
                         transactions: row.transactions,
                         isIncome: false,
                       }}
-                      primaryAmount={row.isMeals ? row.deductible : undefined}
+                      primaryAmount={row.deductible}
+                      plainIncomeStatement
+                      showLine={false}
                     />
                   ))
                 )}
                 {nondeductibleItems.map(([cat, data]) => (
-                  <CategoryRow key={cat} cat={cat} data={data} showLine={false} />
+                  <CategoryRow key={cat} cat={cat} data={data} showLine={false} plainIncomeStatement />
                 ))}
                 <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
-                  <span>Total operating (Schedule C basis)</span>
+                  <span>Total Operating Expenses</span>
                   <span className="font-mono">
                     ${mergedOperatingScheduleCSubtotal.toLocaleString("en", { minimumFractionDigits: 2 })}
                   </span>
@@ -1056,34 +1131,21 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
               </CardContent>
             </Card>
 
-            {/* Above-the-Line Deductions */}
-            {aboveTheLineItems.length > 0 && (
-              <Card className="border-green-200 dark:border-green-900">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base font-bold">Above-the-Line Deductions (Schedule 1)</CardTitle>
-                  <CardDescription>Deducted from AGI, not on Schedule C. Reduces taxable income further.</CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  {aboveTheLineItems.map(([cat, data]) => <CategoryRow key={cat} cat={cat} data={data} />)}
-                  <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
-                    <span>Total Above-the-Line</span>
-                    <span className="text-green-600 font-mono">${totalAboveTheLine.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Total Expenses */}
+            {/* Total Expenses — P&amp;L only (not Schedule 1) */}
             <Card className="border-foreground/20">
               <CardContent className="py-3">
                 <div className="flex justify-between font-bold px-3">
                   <span>Total Expenses</span>
-                  <span className="font-mono">${(totalExpenses + totalAboveTheLine).toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  <span className="font-mono">${totalStatementExpenses.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
                 </div>
+                <p className="text-xs text-muted-foreground px-3 mt-1">
+                  Cost of sales plus operating expenses. Health insurance and other Form 1040 Schedule 1 deductions are
+                  below Net Profit.
+                </p>
               </CardContent>
             </Card>
 
-            {/* Net Profit (Schedule C — meals at 50%) */}
+            {/* Net Profit */}
             <Card
               className={
                 scheduleCNetProfit >= 0
@@ -1093,19 +1155,42 @@ DIY Bench.io &bull; ${new Date().toLocaleDateString()}
             >
               <CardContent className="py-4">
                 <div className="flex justify-between font-bold text-lg px-3">
-                  <span>Net Profit (Schedule C)</span>
+                  <span>Net Profit</span>
                   <span className={`font-mono ${scheduleCNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
                     ${scheduleCNetProfit.toLocaleString("en", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
+                <p className="text-xs text-muted-foreground px-3 mt-1">Total Revenues minus Total Expenses on this statement.</p>
               </CardContent>
             </Card>
+
+            {/* Above-the-Line — Form 1040 Schedule 1 (after P&amp;L net) */}
+            {aboveTheLineItems.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-bold">Form 1040 — Schedule 1 (above-the-line)</CardTitle>
+                  <CardDescription>
+                    These reduce adjusted gross income on your personal return. They are not subtracted on this income
+                    statement and do not change Net Profit above.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {aboveTheLineItems.map(([cat, data]) => (
+                    <CategoryRow key={cat} cat={cat} data={data} plainIncomeStatement showLine={false} />
+                  ))}
+                  <div className="flex justify-between font-semibold border-t pt-2 mt-2 px-3">
+                    <span>Total Schedule 1 deductions (this section)</span>
+                    <span className="font-mono">${totalAboveTheLine.toLocaleString("en", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {ledgerTaxEstimate && (
               <Card className="border-border">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Tax Estimation Summary</CardTitle>
-                  <CardDescription>Same figures as the dashboard Tax Estimate panel and the exported income statement.</CardDescription>
+                  <CardDescription>AGI through estimated tax — same logic as the dashboard Tax Estimate panel.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm pt-0">
                   <div className="flex justify-between gap-2">

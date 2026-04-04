@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { compressImageIfNeeded, readFileAsDataUrl } from "@/lib/client/compress-image"
 import { RefreshCw, Search, Download, Edit3, FileText, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { sumCryptoInvestmentOutlayForYear } from "@/lib/tax/cryptoInvestmentsReference"
 
 interface Transaction {
   id: string
@@ -759,6 +760,11 @@ export function InteractiveTransactionsList({
     })
   }, [transactions])
 
+  const cryptoInvestmentOutlayForAuditYear = useMemo(
+    () => sumCryptoInvestmentOutlayForYear(transactions, String(auditYear)),
+    [transactions, auditYear],
+  )
+
   const upworkAudit = useMemo(() => {
     const candidates = transactions.filter((t) => {
       const text = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase().replace(/\s+/g, " ")
@@ -1462,14 +1468,29 @@ export function InteractiveTransactionsList({
                 </Button>
               </div>
             </div>
-            {cryptoExchangeTransactions.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">{cryptoExchangeTransactions.length} Kraken/Coinbase txn detected</Badge>
-                <Button size="sm" variant="secondary" onClick={handleMarkCryptoPersonal}>
-                  Mark Kraken/Coinbase as Personal/Excluded
-                </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="text-sm">
+                <span className="text-muted-foreground">Crypto / investments outlay ({auditYear}): </span>
+                <span className="font-semibold tabular-nums text-red-600 dark:text-red-400">
+                  $
+                  {cryptoInvestmentOutlayForAuditYear.total.toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+                <span className="text-muted-foreground text-xs ml-1">
+                  ({cryptoInvestmentOutlayForAuditYear.count} expense txn — reference only, not on Schedule C)
+                </span>
               </div>
-            )}
+              {cryptoExchangeTransactions.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline">{cryptoExchangeTransactions.length} Kraken/Coinbase txn detected</Badge>
+                  <Button size="sm" variant="secondary" onClick={handleMarkCryptoPersonal}>
+                    Mark Kraken/Coinbase as Personal/Excluded
+                  </Button>
+                </div>
+              )}
+            </div>
             {missingPhoneMonths.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Missing months (phone/internet): {missingPhoneMonths.map((m) => String(m).padStart(2, "0")).join(", ")}

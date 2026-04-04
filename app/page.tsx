@@ -49,6 +49,7 @@ import {
   ensureAllWithheldFeeAdjustments2025,
 } from "@/lib/stripeReconciliation"
 import { ensureRecoveredTransactions2025, RECOVERED_TRANSACTION_IDS_2025 } from "@/lib/recoveredTransactions2025"
+import { sumCryptoInvestmentOutlayForYear } from "@/lib/tax/cryptoInvestmentsReference"
 
 const ALL_INJECTED_LEDGER_IDS_2025 = [...SYNTHETIC_WITHHELD_FEE_IDS_2025, ...RECOVERED_TRANSACTION_IDS_2025] as readonly string[]
 
@@ -70,6 +71,8 @@ const EMPTY_DASHBOARD_STATS = {
   agi: 0,
   taxSavings: 0,
   estimatedTaxLiability: 0,
+  cryptoInvestmentsOutlay2025: 0,
+  cryptoInvestmentsCount2025: 0,
 }
 
 // Lazy load heavy tab components — only loads when user clicks that tab
@@ -1027,6 +1030,9 @@ export default function CaliforniaBusinessAccounting() {
     const taxWithoutDeductions = noDeductionFederal + noDeductionSE + noDeductionCA
     const taxSavings = Math.max(0, taxWithoutDeductions - estimatedTaxLiability)
 
+    const { total: cryptoInvestmentsOutlay2025, count: cryptoInvestmentsCount2025 } =
+      sumCryptoInvestmentOutlayForYear(currentBusiness.transactions, "2025")
+
     return {
       stats: {
         totalBalance,
@@ -1046,6 +1052,8 @@ export default function CaliforniaBusinessAccounting() {
         agi: ledgerTaxEstimate.adjustedGrossIncome,
         taxSavings,
         estimatedTaxLiability,
+        cryptoInvestmentsOutlay2025,
+        cryptoInvestmentsCount2025,
       },
       ledgerTaxEstimate,
     }
@@ -1278,6 +1286,28 @@ export default function CaliforniaBusinessAccounting() {
                 </p>
               </CardContent>
             </Card>
+          </div>
+
+          <div className="mb-6 rounded-lg border border-orange-200/90 dark:border-orange-900/80 bg-orange-50/40 dark:bg-orange-950/25 px-4 py-3 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">2025 crypto &amp; investment outlays (reference)</p>
+              <p className="text-xs text-muted-foreground">
+                Total of expense rows in Crypto / Investments, Personal - Investments, Crypto Treasury Purchase, and Business
+                Treasury Investment — not included in Schedule C or net profit.
+              </p>
+            </div>
+            <div className="flex items-baseline gap-2 shrink-0">
+              <span className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">
+                $
+                {stats.cryptoInvestmentsOutlay2025.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                {stats.cryptoInvestmentsCount2025} transaction{stats.cryptoInvestmentsCount2025 === 1 ? "" : "s"}
+              </span>
+            </div>
           </div>
 
           {/* Tax Breakdown Detail Row */}
