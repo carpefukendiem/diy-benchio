@@ -31,6 +31,11 @@ import { RetirementOptimizer } from "@/components/retirement-optimizer"
 import { EstimatedTaxSafeHarbor } from "@/components/estimated-tax-safe-harbor"
 import { MappingCoverageAudit } from "@/components/mapping-coverage-audit"
 import { calculateFederalTaxSingle, calculateCaliforniaTaxSingle, CA_STANDARD_DEDUCTION, SS_WAGE_BASE, STANDARD_DEDUCTION } from "@/lib/tax/brackets"
+import {
+  SYNTHETIC_WITHHELD_FEE_IDS_2025,
+  businessHas2025LedgerActivity,
+  ensureAllWithheldFeeAdjustments2025,
+} from "@/lib/stripeReconciliation"
 
 // Lazy load heavy tab components — only loads when user clicks that tab
 const StatementUploader = lazy(() => import("@/components/statement-uploader").then(m => ({ default: m.StatementUploader })))
@@ -61,6 +66,8 @@ interface Transaction {
   pending?: boolean
   /** True for rows created via Manual Entry (not from statement import) */
   manual_entry?: boolean
+  /** Synthetic / CSV-backed adjustments (e.g. Stripe fees not on bank statements) */
+  source?: "manual_adjustment"
   /** Optional memo (manual entry, receipt context) */
   notes?: string
   /** Data URL for an attached receipt image or PDF (stored with the business in localStorage) */
@@ -95,6 +102,8 @@ interface BusinessData {
   transactions: Transaction[]
   receipts: any[]
   lastSync: string
+  /** User removed these synthetic rows; do not re-inject */
+  suppressedSyntheticIds?: string[]
 }
 
 interface TaxProfile {
@@ -241,7 +250,15 @@ export default function CaliforniaBusinessAccounting() {
         if (parsed.length > 0) {
           const cleaned = parsed.map((b: BusinessData) => {
             const { deduped } = dedupeTransactions(b.transactions || [])
-            return { ...b, transactions: deduped }
+            const has2025 = businessHas2025LedgerActivity({
+              transactions: deduped,
+              uploadedStatements: b.uploadedStatements,
+            })
+            const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+              suppressedIds: b.suppressedSyntheticIds ?? [],
+              has2025Activity: has2025,
+            })
+            return { ...b, transactions }
           })
           setBusinesses(cleaned)
           const lastId = localStorage.getItem("lastBusinessId")
@@ -342,6 +359,7 @@ export default function CaliforniaBusinessAccounting() {
       transactions: [],
       receipts: [],
       lastSync: "",
+      suppressedSyntheticIds: [],
     }
 
     setBusinesses((prev) => [...prev, newBusiness])
@@ -408,12 +426,17 @@ export default function CaliforniaBusinessAccounting() {
   const removeTransactions = useCallback(async (ids: string[]) => {
     if (!ids || ids.length === 0) return
     const idSet = new Set(ids)
+    const syntheticRemoved = ids.filter((id) => SYNTHETIC_WITHHELD_FEE_IDS_2025.includes(id))
     setBusinesses((prev) =>
       prev.map((b) =>
         b.id === currentBusinessId
           ? {
               ...b,
               transactions: b.transactions.filter((t) => !idSet.has(t.id)),
+              suppressedSyntheticIds:
+                syntheticRemoved.length > 0
+                  ? Array.from(new Set([...(b.suppressedSyntheticIds ?? []), ...syntheticRemoved]))
+                  : b.suppressedSyntheticIds,
             }
           : b,
       ),
@@ -442,10 +465,17 @@ export default function CaliforniaBusinessAccounting() {
         if (b.id !== currentBusinessId) return b
         const receiptTxns = b.transactions.filter((t) => t.id.startsWith("receipt-txn-"))
         const { deduped } = dedupeTransactions([...statementTransactions, ...receiptTxns])
+        const has2025 =
+          statementTransactions.some((t) => t.date.startsWith("2025")) ||
+          statements.some((s) => s.year === "2025")
+        const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+          suppressedIds: b.suppressedSyntheticIds ?? [],
+          has2025Activity: has2025,
+        })
         return {
           ...b,
           uploadedStatements: statements,
-          transactions: deduped,
+          transactions,
           lastSync: new Date().toLocaleString(),
         }
       }),
@@ -471,6 +501,10 @@ export default function CaliforniaBusinessAccounting() {
     let updated = 0
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const withExclude = currentBusiness.transactions.map(t => {
+      if (t.source === "manual_adjustment") {
+        return t
+      }
+
       const dl = `${t.description || ""} ${t.merchantName || ""}`.toLowerCase()
       const dlNorm = dl.replace(/\s+/g, " ")
       const absAmt = Math.abs(t.amount || 0)
@@ -694,7 +728,15 @@ export default function CaliforniaBusinessAccounting() {
     if (cloudBusinesses && cloudBusinesses.length > 0) {
       const cleaned = cloudBusinesses.map((b) => {
         const { deduped } = dedupeTransactions(b.transactions || [])
-        return { ...b, transactions: deduped }
+        const has2025 = businessHas2025LedgerActivity({
+          transactions: deduped,
+          uploadedStatements: b.uploadedStatements,
+        })
+        const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+          suppressedIds: b.suppressedSyntheticIds ?? [],
+          has2025Activity: has2025,
+        })
+        return { ...b, transactions }
       })
       setBusinesses(cleaned)
       setCurrentBusinessId(cleaned[0].id)
@@ -872,6 +914,7 @@ export default function CaliforniaBusinessAccounting() {
         transactions: [],
         receipts: [],
         lastSync: new Date().toISOString(),
+        suppressedSyntheticIds: [],
       }
       setBusinesses([defaultBusiness])
       setCurrentBusinessId(defaultBusiness.id)

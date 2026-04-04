@@ -47,6 +47,7 @@ interface Transaction {
   merchantName?: string
   pending?: boolean
   manual_entry?: boolean
+  source?: "manual_adjustment"
 }
 
 interface InteractiveTransactionsListProps {
@@ -309,7 +310,9 @@ const TransactionTableRow = memo(function TransactionTableRow({
   accounts: string[]
   onDelete?: () => void
 }) {
-  const isManualRow = Boolean(transaction.manual_entry || transaction.id.startsWith("manual-"))
+  const isManualRow = Boolean(
+    transaction.manual_entry || transaction.source === "manual_adjustment" || transaction.id.startsWith("manual-"),
+  )
   const accountOptions = useMemo(() => {
     const set = new Set(accounts)
     if (transaction.account) set.add(transaction.account)
@@ -319,7 +322,9 @@ const TransactionTableRow = memo(function TransactionTableRow({
     <div
       className={`gap-2 p-3 border rounded-lg hover:bg-muted transition-colors ${
         isSelected ? "bg-accent border-border" : ""
-      } ${isHighlighted ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""}`}
+      } ${isHighlighted ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""} ${
+        transaction.source === "manual_adjustment" ? "border-l-4 border-l-violet-500/80" : ""
+      }`}
       style={{ display: "grid", gridTemplateColumns: gridTemplate, alignItems: "start" }}
     >
       <div className="flex items-start pt-1">
@@ -340,7 +345,7 @@ const TransactionTableRow = memo(function TransactionTableRow({
         <div className="flex flex-wrap gap-1">
           {isManualRow && (
             <Badge variant="secondary" className="text-[10px] w-fit">
-              Manual Entry
+              {transaction.source === "manual_adjustment" ? "Manual adjustment" : "Manual Entry"}
             </Badge>
           )}
           {transaction.merchantName && (
@@ -539,7 +544,9 @@ export function InteractiveTransactionsList({
   const filteredTransactions = useMemo(() => {
     const ledger =
       txViewTab === "manual"
-        ? transactions.filter((t) => t.manual_entry || t.id.startsWith("manual-"))
+        ? transactions.filter(
+            (t) => t.manual_entry || t.source === "manual_adjustment" || t.id.startsWith("manual-"),
+          )
         : transactions
     const filtered = ledger.filter((transaction) => {
       const sl = deferredSearch.toLowerCase()
@@ -1190,7 +1197,18 @@ export function InteractiveTransactionsList({
   }
 
   const exportToCSV = () => {
-    const headers = ["Date", "Description", "Merchant", "Amount", "Category", "Account", "Type", "Notes", "Receipt file"]
+    const headers = [
+      "Date",
+      "Description",
+      "Merchant",
+      "Amount",
+      "Category",
+      "Account",
+      "Type",
+      "Source",
+      "Notes",
+      "Receipt file",
+    ]
     const csvContent = [
       headers.join(","),
       ...filteredTransactions.map((t) =>
@@ -1202,6 +1220,7 @@ export function InteractiveTransactionsList({
           `"${t.category}"`,
           `"${t.account}"`,
           t.isIncome ? "Income" : "Expense",
+          `"${t.source === "manual_adjustment" ? "manual_adjustment" : "statement"}"`,
           `"${(t.notes || "").replace(/"/g, '""')}"`,
           `"${(t.receiptImageFileName || "").replace(/"/g, '""')}"`,
         ].join(","),
@@ -1892,7 +1911,9 @@ export function InteractiveTransactionsList({
                             onReceiptAttachmentChange={handleReceiptAttachmentChange}
                             accounts={accounts}
                             onDelete={
-                              transaction.manual_entry || transaction.id.startsWith("manual-")
+                              transaction.manual_entry ||
+                              transaction.source === "manual_adjustment" ||
+                              transaction.id.startsWith("manual-")
                                 ? () => void onRemoveTransactions([transaction.id])
                                 : undefined
                             }
