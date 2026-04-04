@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { EthereumFix } from "@/components/ethereum-fix"
@@ -30,12 +33,44 @@ import { KEYWORD_MAPPING_RULES } from "@/lib/categorization/keyword-mapping"
 import { RetirementOptimizer } from "@/components/retirement-optimizer"
 import { EstimatedTaxSafeHarbor } from "@/components/estimated-tax-safe-harbor"
 import { MappingCoverageAudit } from "@/components/mapping-coverage-audit"
-import { calculateFederalTaxSingle, calculateCaliforniaTaxSingle, CA_STANDARD_DEDUCTION, SS_WAGE_BASE, STANDARD_DEDUCTION } from "@/lib/tax/brackets"
+import {
+  calculateFederalTaxByFilingStatus,
+  calculateFederalTaxSingle,
+  calculateCaliforniaTaxSingle,
+  CA_STANDARD_DEDUCTION,
+  SS_WAGE_BASE,
+  standardDeductionFederal,
+  type FilingStatus,
+} from "@/lib/tax/brackets"
+import { computeLedgerTaxEstimate, type LedgerTaxEstimate } from "@/lib/tax/taxEstimate"
 import {
   SYNTHETIC_WITHHELD_FEE_IDS_2025,
   businessHas2025LedgerActivity,
   ensureAllWithheldFeeAdjustments2025,
 } from "@/lib/stripeReconciliation"
+import { ensureRecoveredTransactions2025, RECOVERED_TRANSACTION_IDS_2025 } from "@/lib/recoveredTransactions2025"
+
+const ALL_INJECTED_LEDGER_IDS_2025 = [...SYNTHETIC_WITHHELD_FEE_IDS_2025, ...RECOVERED_TRANSACTION_IDS_2025] as readonly string[]
+
+const EMPTY_DASHBOARD_STATS = {
+  totalBalance: 0,
+  totalRevenue: 0,
+  totalExpenses: 0,
+  totalDeductible: 0,
+  schedCDeductions: 0,
+  healthInsuranceTotal: 0,
+  sepIraTotal: 0,
+  netProfit: 0,
+  seTax: 0,
+  seTaxDeduction: 0,
+  qbiDeduction: 0,
+  federalTax: 0,
+  caTax: 0,
+  caLLCFee: 0,
+  agi: 0,
+  taxSavings: 0,
+  estimatedTaxLiability: 0,
+}
 
 // Lazy load heavy tab components — only loads when user clicks that tab
 const StatementUploader = lazy(() => import("@/components/statement-uploader").then(m => ({ default: m.StatementUploader })))
@@ -66,8 +101,8 @@ interface Transaction {
   pending?: boolean
   /** True for rows created via Manual Entry (not from statement import) */
   manual_entry?: boolean
-  /** Synthetic / CSV-backed adjustments (e.g. Stripe fees not on bank statements) */
-  source?: "manual_adjustment"
+  /** Injected / recovered ledger rows (platform fees, dedupe recovery, manual entry) */
+  source?: "manual_adjustment" | "platform_fee_import" | "recovered_import"
   /** Optional memo (manual entry, receipt context) */
   notes?: string
   /** Data URL for an attached receipt image or PDF (stored with the business in localStorage) */
@@ -106,11 +141,61 @@ interface BusinessData {
   suppressedSyntheticIds?: string[]
 }
 
+type InvestmentDocumentRef = {
+  id: string
+  label: string
+  fileName?: string
+}
+
 interface TaxProfile {
   businessName: string
   businessType: string
   entityType: string
   deductions: string[]
+  /** Federal income tax filing status — drives standard deduction and bracket table */
+  filingStatus?: FilingStatus
+  /** Optional override for federal standard deduction (blank = use default for status/year) */
+  federalStandardDeductionOverride?: number | null
+  /** 2025 investment / brokerage tax documents (reference list; files live outside the app) */
+  investmentDocuments2025?: InvestmentDocumentRef[]
+}
+
+const DEFAULT_INVESTMENT_DOCS_2025: InvestmentDocumentRef[] = [
+  {
+    id: "inv-1099-composite-1",
+    label: "Brokerage — 1099 Composite & year-end summary",
+    fileName: "1099 Composite and Year-End Summary - 2025_442.PDF",
+  },
+  {
+    id: "inv-1099-composite-2",
+    label: "Brokerage — 1099 Composite (dated export)",
+    fileName: "1099 Composite and Year-End Summary - 2025_2026-02-06_442.PDF",
+  },
+  {
+    id: "inv-gain-loss",
+    label: "Gain / loss tax worksheet",
+    fileName: "2025-5WW83146-gain_loss_tax_worksheet.csv",
+  },
+  {
+    id: "inv-1099r",
+    label: "Retirement — 1099-R",
+    fileName: "2025-5WW83146-irs_1099r_tax.pdf",
+  },
+]
+
+function normalizeBusinessProfile(profile: TaxProfile): TaxProfile {
+  return {
+    ...profile,
+    filingStatus: profile.filingStatus === "married_joint" ? "married_joint" : "single",
+    federalStandardDeductionOverride:
+      profile.federalStandardDeductionOverride != null && profile.federalStandardDeductionOverride > 0
+        ? profile.federalStandardDeductionOverride
+        : null,
+    investmentDocuments2025:
+      profile.investmentDocuments2025 && profile.investmentDocuments2025.length > 0
+        ? profile.investmentDocuments2025
+        : DEFAULT_INVESTMENT_DOCS_2025,
+  }
 }
 
 // Debounced localStorage save — prevents lag from serializing on every keystroke
@@ -157,8 +242,10 @@ function dedupeTransactions(transactions: Transaction[]): { deduped: Transaction
 
   const groups = new Map<string, Transaction[]>()
   for (const t of transactions) {
-    const merchantish = (t.merchantName || t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
-    const key = `${t.date}|${Number(t.amount).toFixed(2)}|${merchantish}`
+    // Full normalized description + income flag — avoids collapsing distinct Amazon MKTPL* rows
+    // that shared the same parsed merchantName (e.g. "Amazon").
+    const descNorm = (t.description || "").toLowerCase().replace(/\s+/g, " ").trim()
+    const key = `${t.date}|${Number(t.amount).toFixed(2)}|${t.isIncome ? "i" : "e"}|${descNorm}`
     const arr = groups.get(key) || []
     arr.push(t)
     groups.set(key, arr)
@@ -254,7 +341,11 @@ export default function CaliforniaBusinessAccounting() {
               transactions: deduped,
               uploadedStatements: b.uploadedStatements,
             })
-            const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+            let transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+              suppressedIds: b.suppressedSyntheticIds ?? [],
+              has2025Activity: has2025,
+            })
+            transactions = ensureRecoveredTransactions2025(transactions, {
               suppressedIds: b.suppressedSyntheticIds ?? [],
               has2025Activity: has2025,
             })
@@ -287,7 +378,7 @@ export default function CaliforniaBusinessAccounting() {
     if (amazonRetroFixedBusinessIdsRef.current.has(currentBusinessId)) return
     amazonRetroFixedBusinessIdsRef.current.add(currentBusinessId)
 
-    const amazonRe = /\bamzn\b|\bamazon\b|amazon\.com|amazon web services|\baws\b/i
+    const amazonRe = /\bamzn\b|\bamazon\b|amazon\.com|amazon web services|\baws\b|prime\s*video/i
     const targetCategory = "Personal - Entertainment"
     const newCategory = "Software & Web Hosting Expense"
 
@@ -328,6 +419,83 @@ export default function CaliforniaBusinessAccounting() {
     }
   }, [isHydrated, currentBusiness, currentBusinessId, toast])
 
+  // One-time per business: 2025 audit fixes (Prime Video → software if misfiled as personal, soccer → advertising, apparel → personal shopping).
+  useEffect(() => {
+    if (!isHydrated || !currentBusinessId || !currentBusiness) return
+    const storageKey = `diy-benchio-2025-tax-audit-migration-v3:${currentBusinessId}`
+    try {
+      if (localStorage.getItem(storageKey)) return
+    } catch {
+      return
+    }
+
+    let changed = 0
+    const nextTx = currentBusiness.transactions.map((t) => {
+      if (!t.date.startsWith("2025")) return t
+      const desc = `${t.description || ""} ${t.merchantName || ""}`
+      const dl = desc.toLowerCase()
+
+      if (t.category === "Personal - Entertainment" && /prime\s*video/i.test(desc)) {
+        changed++
+        return {
+          ...t,
+          category: "Software & Web Hosting Expense",
+          isIncome: false,
+          is_personal: false,
+          is_transfer: false,
+          exclude: false,
+          categorized_by: "rule" as const,
+          confidence: 0.99,
+        }
+      }
+      if (t.category === "Soccer Team Sponsorship") {
+        changed++
+        return {
+          ...t,
+          category: "Advertising & Marketing",
+          isIncome: false,
+          is_personal: false,
+          is_transfer: false,
+          exclude: false,
+          categorized_by: "rule" as const,
+          confidence: 0.99,
+        }
+      }
+      if (
+        (dl.includes("shapermint") || dl.includes("honeylove")) &&
+        (t.category !== "Personal - Shopping" || t.is_personal !== true)
+      ) {
+        changed++
+        return {
+          ...t,
+          category: "Personal - Shopping",
+          isIncome: false,
+          is_personal: true,
+          is_transfer: false,
+          exclude: false,
+          categorized_by: "rule" as const,
+          confidence: 0.99,
+        }
+      }
+      return t
+    })
+
+    try {
+      localStorage.setItem(storageKey, "1")
+    } catch {
+      /* ignore */
+    }
+    if (changed === 0) return
+
+    setBusinesses((prev) =>
+      prev.map((b) => (b.id === currentBusinessId ? { ...b, transactions: nextTx } : b)),
+    )
+    toast({
+      title: "2025 ledger updates applied",
+      description: `${changed} transaction(s) were recategorized (Prime Video, sponsorship, or personal apparel).`,
+    })
+  }, [isHydrated, currentBusinessId, currentBusiness, toast])
+
   // Debounced save to localStorage
   useEffect(() => {
     if (!isHydrated || businesses.length === 0) return
@@ -349,12 +517,15 @@ export default function CaliforniaBusinessAccounting() {
   const handleWizardComplete = useCallback((profile: TaxProfile) => {
     const newBusiness: BusinessData = {
       id: Date.now().toString(),
-      profile: {
+      profile: normalizeBusinessProfile({
         businessName: profile.businessName,
         businessType: profile.businessType,
         entityType: profile.entityType,
         deductions: profile.deductions,
-      },
+        filingStatus: "single",
+        federalStandardDeductionOverride: null,
+        investmentDocuments2025: DEFAULT_INVESTMENT_DOCS_2025,
+      }),
       uploadedStatements: [],
       transactions: [],
       receipts: [],
@@ -387,6 +558,19 @@ export default function CaliforniaBusinessAccounting() {
   const updateCurrentBusiness = useCallback((updates: Partial<BusinessData>) => {
     setBusinesses((prev) => prev.map((b) => (b.id === currentBusinessId ? { ...b, ...updates } : b)))
   }, [currentBusinessId])
+
+  const updateBusinessProfile = useCallback(
+    (updates: Partial<TaxProfile>) => {
+      setBusinesses((prev) =>
+        prev.map((b) =>
+          b.id === currentBusinessId
+            ? { ...b, profile: normalizeBusinessProfile({ ...b.profile, ...updates }) }
+            : b,
+        ),
+      )
+    },
+    [currentBusinessId],
+  )
 
   const updateTransaction = useCallback(async (transactionId: string, updates: Partial<Transaction>) => {
     setBusinesses((prev) =>
@@ -426,7 +610,7 @@ export default function CaliforniaBusinessAccounting() {
   const removeTransactions = useCallback(async (ids: string[]) => {
     if (!ids || ids.length === 0) return
     const idSet = new Set(ids)
-    const syntheticRemoved = ids.filter((id) => SYNTHETIC_WITHHELD_FEE_IDS_2025.includes(id))
+    const syntheticRemoved = ids.filter((id) => ALL_INJECTED_LEDGER_IDS_2025.includes(id))
     setBusinesses((prev) =>
       prev.map((b) =>
         b.id === currentBusinessId
@@ -468,7 +652,11 @@ export default function CaliforniaBusinessAccounting() {
         const has2025 =
           statementTransactions.some((t) => t.date.startsWith("2025")) ||
           statements.some((s) => s.year === "2025")
-        const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+        let transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+          suppressedIds: b.suppressedSyntheticIds ?? [],
+          has2025Activity: has2025,
+        })
+        transactions = ensureRecoveredTransactions2025(transactions, {
           suppressedIds: b.suppressedSyntheticIds ?? [],
           has2025Activity: has2025,
         })
@@ -501,7 +689,11 @@ export default function CaliforniaBusinessAccounting() {
     let updated = 0
     const keywordRules = [...KEYWORD_MAPPING_RULES].sort((a, b) => b.priority - a.priority)
     const withExclude = currentBusiness.transactions.map(t => {
-      if (t.source === "manual_adjustment") {
+      if (
+        t.source === "manual_adjustment" ||
+        t.source === "platform_fee_import" ||
+        t.source === "recovered_import"
+      ) {
         return t
       }
 
@@ -532,7 +724,8 @@ export default function CaliforniaBusinessAccounting() {
         if (catInfo) {
           updated++
           const cat = catInfo.name
-          const exclude = cat === "Owner's Contribution" || cat === "Loan Proceeds"
+          const exclude =
+            cat === "Owner's Contribution" || cat === "Loan Proceeds" || cat === "Business Loan Proceeds"
           return {
             ...t,
             category: cat,
@@ -676,7 +869,10 @@ export default function CaliforniaBusinessAccounting() {
     })
     const newTransactions = withExclude.map((t) => ({
       ...t,
-      exclude: t.category === "Owner's Contribution" || t.category === "Loan Proceeds",
+      exclude:
+        t.category === "Owner's Contribution" ||
+        t.category === "Loan Proceeds" ||
+        t.category === "Business Loan Proceeds",
     })) as Transaction[]
 
     const changedIds = newTransactions
@@ -732,11 +928,15 @@ export default function CaliforniaBusinessAccounting() {
           transactions: deduped,
           uploadedStatements: b.uploadedStatements,
         })
-        const transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
+        let transactions = ensureAllWithheldFeeAdjustments2025(deduped, {
           suppressedIds: b.suppressedSyntheticIds ?? [],
           has2025Activity: has2025,
         })
-        return { ...b, transactions }
+        transactions = ensureRecoveredTransactions2025(transactions, {
+          suppressedIds: b.suppressedSyntheticIds ?? [],
+          has2025Activity: has2025,
+        })
+        return { ...b, profile: normalizeBusinessProfile(b.profile), transactions }
       })
       setBusinesses(cleaned)
       setCurrentBusinessId(cleaned[0].id)
@@ -779,83 +979,75 @@ export default function CaliforniaBusinessAccounting() {
 
   // Tax bracket helpers now live in `lib/tax/brackets.ts`
 
-  // Memoize expensive calculations
-  const stats = useMemo(() => {
-    if (!currentBusiness) return {
-      totalBalance: 0, totalRevenue: 0, totalExpenses: 0, totalDeductible: 0,
-      schedCDeductions: 0, healthInsuranceTotal: 0, sepIraTotal: 0,
-      netProfit: 0, seTax: 0, seTaxDeduction: 0, qbiDeduction: 0,
-      federalTax: 0, caTax: 0, caLLCFee: 0, agi: 0,
-      taxSavings: 0, estimatedTaxLiability: 0,
-    }
+  // Memoize expensive calculations + full ledger tax estimate (filing status / std deduction aware)
+  const { stats, ledgerTaxEstimate } = useMemo((): {
+    stats: typeof EMPTY_DASHBOARD_STATS
+    ledgerTaxEstimate: LedgerTaxEstimate | null
+  } => {
+    if (!currentBusiness) return { stats: EMPTY_DASHBOARD_STATS, ledgerTaxEstimate: null }
+
+    const filing: FilingStatus =
+      currentBusiness.profile.filingStatus === "married_joint" ? "married_joint" : "single"
+    const ledgerTaxEstimate = computeLedgerTaxEstimate(currentBusiness.transactions, {
+      taxYear: 2025,
+      filingStatus: filing,
+      federalStandardDeductionOverride: currentBusiness.profile.federalStandardDeductionOverride,
+    })
 
     const totalBalance = currentBusiness.uploadedStatements.reduce((sum, statement) => {
       return sum + statement.transactions.reduce((acc, t) => acc + (t.isIncome ? t.amount : -t.amount), 0)
     }, 0)
 
-    const totalRevenue = currentBusiness.transactions
-      .filter((t) => t.isIncome && !t.exclude)
-      .reduce((sum, t) => sum + t.amount, 0)
+    const { totalExpenses, schedCDeductions, healthInsuranceTotal, sepIraTotal } = computeUiExpenseTotals(
+      currentBusiness.transactions,
+    )
+    const totalDeductible =
+      ledgerTaxEstimate.scheduleCTotalDeductions +
+      ledgerTaxEstimate.healthInsuranceDeduction +
+      ledgerTaxEstimate.sepIraContributed
 
-    const { totalExpenses, schedCDeductions, healthInsuranceTotal, sepIraTotal } = computeUiExpenseTotals(currentBusiness.transactions)
-    // Total deductible = Schedule C expenses + above-the-line items
-    const totalDeductible = schedCDeductions + healthInsuranceTotal + sepIraTotal
-
-    // --- IRS-accurate tax calculation for Schedule C sole proprietor ---
-    // Schedule C: Revenue - COGS - Business expenses = Net Profit
-    const netProfit = Math.max(0, totalRevenue - schedCDeductions)
-
-    // 1. Self-employment tax: 15.3% on 92.35% of net profit (up to SS wage base)
     const ssWageBase2025 = SS_WAGE_BASE[2025]
-    const seTaxableIncome = Math.min(netProfit * 0.9235, ssWageBase2025)
-    const ssTax = Math.min(seTaxableIncome, ssWageBase2025) * 0.124 // Social Security 12.4%
-    const medicareTax = (netProfit * 0.9235) * 0.029 // Medicare 2.9% on ALL
-    const seTax = ssTax + medicareTax
-    const seTaxDeduction = seTax * 0.5 // Deductible half of SE tax
+    const caLLCFee = ledgerTaxEstimate.grossRevenue >= 250000 ? 800 : 0
+    const estimatedTaxLiability = ledgerTaxEstimate.totalEstimatedTaxOwed + caLLCFee
 
-    // 2. QBI deduction (Sec 199A): 20% of QBI for pass-through under $191,950 (2025)
-    const qbiDeduction = netProfit * 0.20
-
-    // 3. Adjusted Gross Income for federal
-    // AGI = Net Profit - 1/2 SE tax - SE health insurance - SEP-IRA
-    const agi = Math.max(0, netProfit - seTaxDeduction - healthInsuranceTotal - sepIraTotal)
-
-    // 4. Standard deduction 2025: $15,000 single
-    const standardDeduction = STANDARD_DEDUCTION[2025]
-
-    // 5. Taxable income after standard deduction + QBI
-    const federalTaxableIncome = Math.max(0, agi - standardDeduction - qbiDeduction)
-
-    // 6. 2025 Federal brackets (single filer)
-    const federalTax = calculateFederalTaxSingle(2025, federalTaxableIncome)
-
-    // 7. California tax (single filer, 2025 brackets)
-    // CA doesn't allow QBI deduction but does allow SE health ins + SEP-IRA deductions
-    const caStandardDeduction = CA_STANDARD_DEDUCTION[2025]
-    const caTaxableIncome = Math.max(0, agi - caStandardDeduction)
-    const caTax = calculateCaliforniaTaxSingle(2025, caTaxableIncome)
-    // CA LLC fee waived for 2024-2026 if revenue < $250K
-    const caLLCFee = totalRevenue >= 250000 ? 800 : 0
-
-    // Total estimated tax liability
-    const estimatedTaxLiability = Math.max(0, federalTax + seTax + caTax + caLLCFee)
-
-    // Tax savings = what you'd owe with $0 deductions vs what you actually owe
-    const noDeductionProfit = totalRevenue
+    const defaultStd = standardDeductionFederal(2025, filing)
+    const noDeductionProfit = ledgerTaxEstimate.grossRevenue
     const noDeductionSEIncome = Math.min(noDeductionProfit * 0.9235, ssWageBase2025)
-    const noDeductionSE = (noDeductionSEIncome * 0.124) + ((noDeductionProfit * 0.9235) * 0.029)
-    const noDeductionAGI = noDeductionProfit - (noDeductionSE * 0.5)
-    const noDeductionFederal = calculateFederalTaxSingle(2025, Math.max(0, noDeductionAGI - standardDeduction - noDeductionProfit * 0.20))
-    const noDeductionCA = calculateCaliforniaTaxSingle(2025, Math.max(0, noDeductionAGI - caStandardDeduction))
+    const noDeductionSE = noDeductionSEIncome * 0.124 + noDeductionProfit * 0.9235 * 0.029
+    const noDeductionAGI = noDeductionProfit - noDeductionSE * 0.5
+    const noDeductionFederal = calculateFederalTaxByFilingStatus(
+      2025,
+      Math.max(0, noDeductionAGI - defaultStd - noDeductionProfit * 0.2),
+      filing,
+    )
+    const noDeductionCA = calculateCaliforniaTaxSingle(
+      2025,
+      Math.max(0, noDeductionAGI - CA_STANDARD_DEDUCTION[2025]),
+    )
     const taxWithoutDeductions = noDeductionFederal + noDeductionSE + noDeductionCA
     const taxSavings = Math.max(0, taxWithoutDeductions - estimatedTaxLiability)
 
     return {
-      totalBalance, totalRevenue, totalExpenses, totalDeductible,
-      schedCDeductions, healthInsuranceTotal, sepIraTotal,
-      netProfit, seTax, seTaxDeduction, qbiDeduction,
-      federalTax, caTax, caLLCFee, agi,
-      taxSavings, estimatedTaxLiability,
+      stats: {
+        totalBalance,
+        totalRevenue: ledgerTaxEstimate.grossRevenue,
+        totalExpenses,
+        totalDeductible,
+        schedCDeductions,
+        healthInsuranceTotal,
+        sepIraTotal,
+        netProfit: ledgerTaxEstimate.netProfitScheduleC,
+        seTax: ledgerTaxEstimate.selfEmploymentTax,
+        seTaxDeduction: ledgerTaxEstimate.halfSETaxDeduction,
+        qbiDeduction: ledgerTaxEstimate.qbiDeduction,
+        federalTax: ledgerTaxEstimate.federalIncomeTax,
+        caTax: ledgerTaxEstimate.californiaIncomeTax,
+        caLLCFee,
+        agi: ledgerTaxEstimate.adjustedGrossIncome,
+        taxSavings,
+        estimatedTaxLiability,
+      },
+      ledgerTaxEstimate,
     }
   }, [currentBusiness])
 
@@ -902,14 +1094,15 @@ export default function CaliforniaBusinessAccounting() {
       }
       const defaultBusiness: BusinessData = {
         id: Date.now().toString(),
-        profile: {
+        profile: normalizeBusinessProfile({
           businessName: "My Business",
           businessType: "service",
           entityType: "sole_proprietor",
-          taxYear: "2025",
-          state: "CA",
           deductions: ["vehicle", "meals", "office", "software", "phone-internet", "advertising", "professional", "bank-fees", "utilities", "home-office"],
-        },
+          filingStatus: "single",
+          federalStandardDeductionOverride: null,
+          investmentDocuments2025: DEFAULT_INVESTMENT_DOCS_2025,
+        }),
         uploadedStatements: [],
         transactions: [],
         receipts: [],
@@ -1123,6 +1316,159 @@ export default function CaliforniaBusinessAccounting() {
             </div>
           </div>
 
+          {ledgerTaxEstimate && currentBusiness && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+              <Card className="border-border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Tax Estimate (2025)</CardTitle>
+                  <CardDescription>
+                    Updates live with your ledger. Configure filing status and optional federal standard deduction.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Filing status</Label>
+                      <Select
+                        value={currentBusiness.profile.filingStatus === "married_joint" ? "married_joint" : "single"}
+                        onValueChange={(v) =>
+                          updateBusinessProfile({ filingStatus: v === "married_joint" ? "married_joint" : "single" })
+                        }
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="single">Single</SelectItem>
+                          <SelectItem value="married_joint">Married filing jointly</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Federal standard deduction override</Label>
+                      <Input
+                        className="h-9"
+                        placeholder={`Default $${standardDeductionFederal(2025, currentBusiness.profile.filingStatus === "married_joint" ? "married_joint" : "single").toLocaleString()}`}
+                        value={
+                          currentBusiness.profile.federalStandardDeductionOverride != null &&
+                          currentBusiness.profile.federalStandardDeductionOverride > 0
+                            ? String(currentBusiness.profile.federalStandardDeductionOverride)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/,/g, "").trim()
+                          if (raw === "") {
+                            updateBusinessProfile({ federalStandardDeductionOverride: null })
+                            return
+                          }
+                          const n = Number.parseFloat(raw)
+                          updateBusinessProfile({
+                            federalStandardDeductionOverride: Number.isFinite(n) && n > 0 ? n : null,
+                          })
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 border-t pt-3">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Gross revenue</span>
+                      <span className="font-mono">${ledgerTaxEstimate.grossRevenue.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Total Schedule C deductions</span>
+                      <span className="font-mono">${ledgerTaxEstimate.scheduleCTotalDeductions.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2 font-medium">
+                      <span>Net profit (Schedule C)</span>
+                      <span className="font-mono">${ledgerTaxEstimate.netProfitScheduleC.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 border-t pt-3 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Self-employment tax</span>
+                      <span className="font-mono text-foreground">${ledgerTaxEstimate.selfEmploymentTax.toFixed(2)}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Check: net profit × 0.9235 × 0.153 = ${ledgerTaxEstimate.selfEmploymentTaxSimplified.toFixed(2)}
+                    </p>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">½ SE tax deduction (Schedule 1)</span>
+                      <span className="font-mono text-foreground">−${ledgerTaxEstimate.halfSETaxDeduction.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Health insurance (Schedule 1 Line 17)</span>
+                      <span className="font-mono text-foreground">−${ledgerTaxEstimate.healthInsuranceDeduction.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Adjusted gross income (AGI)</span>
+                      <span className="font-mono text-foreground">${ledgerTaxEstimate.adjustedGrossIncome.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Standard deduction (federal)</span>
+                      <span className="font-mono text-foreground">−${ledgerTaxEstimate.federalStandardDeduction.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Taxable income (federal, after QBI)</span>
+                      <span className="font-mono text-foreground">${ledgerTaxEstimate.taxableIncomeFederal.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 border-t pt-3">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Federal income tax</span>
+                      <span className="font-mono">${ledgerTaxEstimate.federalIncomeTax.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Self-employment tax</span>
+                      <span className="font-mono">${ledgerTaxEstimate.selfEmploymentTax.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">California income tax</span>
+                      <span className="font-mono">${ledgerTaxEstimate.californiaIncomeTax.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2 font-semibold border-t pt-2">
+                      <span>Total estimated tax owed</span>
+                      <span className="font-mono">${(ledgerTaxEstimate.totalEstimatedTaxOwed + stats.caLLCFee).toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="border-t pt-3 text-xs space-y-1">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">SEP-IRA max deferral (25% of net, cap $70,000)</span>
+                      <span className="font-mono">${ledgerTaxEstimate.sepIraMaxDeferral.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Est. federal tax saved if max SEP (planning)</span>
+                      <span className="font-mono">${ledgerTaxEstimate.estimatedFederalTaxSavedIfMaxSep.toFixed(2)}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground pt-1">
+                      SEP figures support 2026 planning; confirm with your CPA and IRS limits for your situation.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">2025 investment tax documents</CardTitle>
+                  <CardDescription>
+                    Reference list for brokerage and retirement forms (store files in your tax folder).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="text-sm space-y-2">
+                  <ul className="list-disc pl-5 space-y-1.5 text-muted-foreground">
+                    {(currentBusiness.profile.investmentDocuments2025 ?? DEFAULT_INVESTMENT_DOCS_2025).map((doc) => (
+                      <li key={doc.id}>
+                        <span className="text-foreground">{doc.label}</span>
+                        {doc.fileName && (
+                          <span className="block text-xs font-mono text-muted-foreground">{doc.fileName}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="statements">Statements</TabsTrigger>
@@ -1208,6 +1554,8 @@ export default function CaliforniaBusinessAccounting() {
                     businessName={currentBusiness.profile.businessName}
                     dateRange={{ start: "2025-01-01", end: "2025-12-31" }}
                     highlightedTransactionIds={highlightedTransactionIds}
+                    ledgerTaxEstimate={ledgerTaxEstimate}
+                    caLLCFee={stats.caLLCFee}
                   />
                 </Suspense>
               )}

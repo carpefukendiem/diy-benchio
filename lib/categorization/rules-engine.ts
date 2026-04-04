@@ -82,6 +82,8 @@ export const CATEGORY_ID_TO_NAME: Record<string, { name: string; isIncome: boole
   "00000000-0000-0000-0003-000000000008": { name: "Owner's Contribution", isIncome: false },
   /** Non-revenue credits: loan / capital advances (e.g. Stripe Capital) — not gross receipts */
   "00000000-0000-0000-0003-000000000009": { name: "Loan Proceeds", isIncome: false },
+  /** Stripe Capital / business loan advances — liability, not gross receipts */
+  "00000000-0000-0000-0003-000000000010": { name: "Business Loan Proceeds", isIncome: false },
   "00000000-0000-0000-0003-000000000003": { name: "Internal Transfer", isIncome: false },
   "00000000-0000-0000-0003-000000000005": { name: "Credit Card Payment", isIncome: false },
   "00000000-0000-0000-0003-000000000006": { name: "Owner Draw", isIncome: false },
@@ -159,6 +161,7 @@ export const BUILT_IN_RULES: Array<{
   // ============================
   // ADVERTISING & MARKETING (0002-01) — Schedule C Line 8
   // ============================
+  { pattern: 'sponsorship', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.88 },
   { pattern: 'google ads', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'facebook ads', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.95 },
   { pattern: 'facebk', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.90 },
@@ -168,12 +171,12 @@ export const BUILT_IN_RULES: Array<{
   { pattern: 'yelp', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.85 },
 
   // ============================
-  // SOCCER TEAM SPONSORSHIP (0002-30) — Schedule C Line 8 (Advertising)
+  // SOCCER / AFFIRM SPONSORSHIP — Schedule C Line 8 (Advertising & Marketing)
   // ============================
-  { pattern: 'aggressive socc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.95 },
-  { pattern: 'affirm inc affirm pay', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.85 },
-  { pattern: 'affirm inc affirm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.80 },
-  { pattern: 'soccer', match: 'contains', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'aggressive socc', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.95 },
+  { pattern: 'affirm inc affirm pay', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.85 },
+  { pattern: 'affirm inc affirm', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.80 },
+  { pattern: 'soccer', match: 'contains', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false, confidence: 0.75 },
 
   // ============================
   // GAS & AUTO (0002-03) — Schedule C Line 9
@@ -918,6 +921,8 @@ function highPriorityPatternMatches(
 export const OWNERS_CONTRIBUTION_CATEGORY_ID = '00000000-0000-0000-0003-000000000008';
 /** Non-revenue credits: loans / capital advances (e.g. Stripe Capital) */
 export const LOAN_PROCEEDS_CATEGORY_ID = '00000000-0000-0000-0003-000000000009';
+/** Stripe Capital, Stripe Cap inflows — Schedule C liability, not Line 1 revenue */
+export const BUSINESS_LOAN_PROCEEDS_CATEGORY_ID = '00000000-0000-0000-0003-000000000010';
 
 const OWNER_INFLOW_PHRASES = [
   'online transfer from',
@@ -961,18 +966,39 @@ export type HighPriorityRule = {
 
 const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   // --- Non-revenue credits (before any income / Stripe catch-alls) ---
-  { pattern: 'stripe capital', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
-  { pattern: 'stripe loan', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'stripe capital', category_id: BUSINESS_LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'stripe loan', category_id: BUSINESS_LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'loan deposit', category_id: LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'online transfer from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'transfer from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'zelle payment from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
   { pattern: 'zelle from', category_id: OWNERS_CONTRIBUTION_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
 
+  // --- Sponsorships → Advertising Line 8 (before generic vendor rules) ---
+  { pattern: 'sponsorship', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false },
+
+  // --- Prime Video (before amzn) → Software & Web Hosting, Line 27a (business streaming/subscriptions) ---
+  { pattern: 'prime video channe', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'prime video channels', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'amazon prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  // --- Personal apparel (PayPal) ---
+  { pattern: 'paypal *shapermint', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'paypal shapermint', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'shapermint', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'paypal *honeylove', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'paypal honeylove', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  { pattern: 'honeylove', category_id: '00000000-0000-0000-0004-000000000004', is_personal: true, is_transfer: false },
+  // --- Stripe Capital / loan inflow (credit) — not gross receipts ---
+  { pattern: 'ranking sb stripe cap', category_id: BUSINESS_LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+  { pattern: 'stripe cap', category_id: BUSINESS_LOAN_PROCEEDS_CATEGORY_ID, is_personal: false, is_transfer: true, creditOnly: true, exclude_from_revenue: true },
+
   // --- Audible (must precede amzn / Amzn.com/bill) → Education & Training ---
   { pattern: 'audible', category_id: '00000000-0000-0000-0002-000000000023', is_personal: false, is_transfer: false },
 
   // --- Amazon purchases (permanent rule) → Software & Web Hosting (not income) ---
+  { pattern: 'amazon mktpl', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
+  { pattern: 'amazon mktplace', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'amzn', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'amazon.com', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'amazon web services', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
@@ -1020,19 +1046,16 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'messaging credits', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // Home Depot ONLINE PMT = credit card payment, not home improvement
   { pattern: 'home depot online pmt', category_id: '00000000-0000-0000-0003-000000000005', is_personal: false, is_transfer: true },
+  { pattern: 'upwork ca', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
   { pattern: 'upwork', category_id: '00000000-0000-0000-0001-000000000004', is_personal: false, is_transfer: false },
-  // --- Prime Video → Software (matches manual Schedule C export; beats amzn-less "Prime Video *…" charges) ---
-  { pattern: 'prime video channe', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  { pattern: 'prime video channels', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  { pattern: 'amazon prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  { pattern: 'prime video', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  { pattern: 'amazon prime', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   // --- Crypto / investments (excluded from Schedule C) ---
   { pattern: 'instant pmt from coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
   { pattern: 'kraken', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
   { pattern: 'coinbase', category_id: '00000000-0000-0000-0004-000000000009', is_personal: true, is_transfer: true },
   // --- Disney / DLR — treat retreat-related WDT C/WDTC + in-park spend as business travel ---
   // Keep specific souvenir/shop patterns personal so they remain excluded from Schedule C.
+  { pattern: 'disneyland', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
+  { pattern: 'dlr front desk', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
   { pattern: 'dlr wdtc', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
   { pattern: 'dlr coffee', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
   { pattern: 'dlr pym', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
@@ -1046,8 +1069,6 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'dlr', category_id: '00000000-0000-0000-0002-000000000034', is_personal: false, is_transfer: false },
   // --- PayPal personal purchases (before generic PayPal) ---
   { pattern: 'paypal *thrivecaus', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'paypal inst xfer honeylove', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
-  { pattern: 'paypal inst xfer*honeylove', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   { pattern: 'paypal *acquisitio', category_id: '00000000-0000-0000-0004-000000000001', is_personal: true, is_transfer: false },
   // --- Restaurants & meals ---
   { pattern: 'benchmark eate', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },
@@ -1098,7 +1119,7 @@ const HIGH_PRIORITY_PATTERNS: HighPriorityRule[] = [
   { pattern: 'ouraring', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'oura ring', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
   { pattern: 'google one', category_id: '00000000-0000-0000-0002-000000000022', is_personal: false, is_transfer: false },
-  { pattern: 'affirm', category_id: '00000000-0000-0000-0002-000000000030', is_personal: false, is_transfer: false },
+  { pattern: 'affirm', category_id: '00000000-0000-0000-0002-000000000001', is_personal: false, is_transfer: false },
   { pattern: 'sprouts', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
   { pattern: 'albertsons', category_id: '00000000-0000-0000-0002-000000000031', is_personal: false, is_transfer: false, amountMax: 50 },
   { pattern: 'coldstone', category_id: '00000000-0000-0000-0002-000000000019', is_personal: false, is_transfer: false },

@@ -48,7 +48,12 @@ export function computeUiExpenseTotals(transactions: UiTransactionLike[]) {
     "brokerage transfer",
     "business treasury",
   ]
-  const capitalKeywords = ["business loan proceeds", "loan repayment - principal", "crypto treasury purchase"]
+  const capitalKeywords = [
+    "business loan proceeds",
+    "loan proceeds",
+    "loan repayment - principal",
+    "crypto treasury purchase",
+  ]
   const aboveTheLineKeywords = ["health insurance", "sep-ira"]
 
   let totalExpenses = 0

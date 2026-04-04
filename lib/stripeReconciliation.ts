@@ -22,6 +22,8 @@ export const STRIPE_BALANCE_SUMMARY_2025_USD = {
   feesWithheld: 1_748.49,
 } as const
 
+export type LedgerInjectionSource = "manual_adjustment" | "platform_fee_import" | "recovered_import"
+
 export type StripeAdjustmentUiTxn = {
   id: string
   date: string
@@ -32,7 +34,7 @@ export type StripeAdjustmentUiTxn = {
   isIncome: boolean
   exclude?: boolean
   manual_entry?: boolean
-  source?: "manual_adjustment"
+  source?: LedgerInjectionSource
   notes?: string
   is_personal?: boolean
   is_transfer?: boolean
@@ -44,7 +46,7 @@ export function buildStripeAnnualFeeAdjustment2025(): StripeAdjustmentUiTxn {
   return {
     id: STRIPE_ANNUAL_FEE_ADJUSTMENT_ID,
     date: "2025-12-31",
-    description: "Stripe Processing Fees (Annual - withheld from payouts)",
+    description: "Stripe Processing Fees 2025 (withheld from payouts)",
     amount: STRIPE_BALANCE_SUMMARY_2025_USD.feesWithheld,
     category: "Merchant Processing Fees",
     account: "Stripe",
@@ -52,7 +54,7 @@ export function buildStripeAnnualFeeAdjustment2025(): StripeAdjustmentUiTxn {
     is_personal: false,
     is_transfer: false,
     manual_entry: true,
-    source: "manual_adjustment",
+    source: "platform_fee_import",
     notes:
       "Synthetic: Stripe withheld this before payout (not on bank statements). Balance Summary 2025 gross activity $" +
       STRIPE_BALANCE_SUMMARY_2025_USD.grossActivity.toLocaleString("en-US", { minimumFractionDigits: 2 }) +
@@ -75,7 +77,7 @@ export function buildUpworkServiceFeeSeo2025(): StripeAdjustmentUiTxn {
     is_personal: false,
     is_transfer: false,
     manual_entry: true,
-    source: "manual_adjustment",
+    source: "platform_fee_import",
     notes:
       "Synthetic: Upwork service fee withheld per official earnings report (not a separate bank line).",
     categorized_by: "user",
@@ -96,7 +98,7 @@ export function buildUpworkServiceFeeQa2025(): StripeAdjustmentUiTxn {
     is_personal: false,
     is_transfer: false,
     manual_entry: true,
-    source: "manual_adjustment",
+    source: "platform_fee_import",
     notes:
       "Synthetic: Upwork service fee withheld per official earnings report (not a separate bank line).",
     categorized_by: "user",

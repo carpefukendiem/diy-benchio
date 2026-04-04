@@ -47,7 +47,24 @@ interface Transaction {
   merchantName?: string
   pending?: boolean
   manual_entry?: boolean
-  source?: "manual_adjustment"
+  source?: "manual_adjustment" | "platform_fee_import" | "recovered_import"
+}
+
+function transactionExportSource(t: Transaction): string {
+  if (t.source === "platform_fee_import") return "platform_fee_import"
+  if (t.source === "recovered_import") return "recovered_import"
+  if (t.source === "manual_adjustment") return "manual_adjustment"
+  return "statement"
+}
+
+function isDeletableManualLedgerRow(t: Transaction): boolean {
+  return Boolean(
+    t.manual_entry ||
+      t.source === "manual_adjustment" ||
+      t.source === "platform_fee_import" ||
+      t.source === "recovered_import" ||
+      t.id.startsWith("manual-"),
+  )
 }
 
 interface InteractiveTransactionsListProps {
@@ -310,9 +327,7 @@ const TransactionTableRow = memo(function TransactionTableRow({
   accounts: string[]
   onDelete?: () => void
 }) {
-  const isManualRow = Boolean(
-    transaction.manual_entry || transaction.source === "manual_adjustment" || transaction.id.startsWith("manual-"),
-  )
+  const isManualRow = isDeletableManualLedgerRow(transaction)
   const accountOptions = useMemo(() => {
     const set = new Set(accounts)
     if (transaction.account) set.add(transaction.account)
@@ -323,7 +338,11 @@ const TransactionTableRow = memo(function TransactionTableRow({
       className={`gap-2 p-3 border rounded-lg hover:bg-muted transition-colors ${
         isSelected ? "bg-accent border-border" : ""
       } ${isHighlighted ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-700" : ""} ${
-        transaction.source === "manual_adjustment" ? "border-l-4 border-l-violet-500/80" : ""
+        transaction.source === "manual_adjustment" || transaction.source === "platform_fee_import"
+          ? "border-l-4 border-l-violet-500/80"
+          : transaction.source === "recovered_import"
+            ? "border-l-4 border-l-sky-500/80"
+            : ""
       }`}
       style={{ display: "grid", gridTemplateColumns: gridTemplate, alignItems: "start" }}
     >
@@ -345,7 +364,13 @@ const TransactionTableRow = memo(function TransactionTableRow({
         <div className="flex flex-wrap gap-1">
           {isManualRow && (
             <Badge variant="secondary" className="text-[10px] w-fit">
-              {transaction.source === "manual_adjustment" ? "Manual adjustment" : "Manual Entry"}
+              {transaction.source === "manual_adjustment"
+                ? "Manual adjustment"
+                : transaction.source === "platform_fee_import"
+                  ? "Platform fee import"
+                  : transaction.source === "recovered_import"
+                    ? "Recovered import"
+                    : "Manual Entry"}
             </Badge>
           )}
           {transaction.merchantName && (
@@ -544,9 +569,7 @@ export function InteractiveTransactionsList({
   const filteredTransactions = useMemo(() => {
     const ledger =
       txViewTab === "manual"
-        ? transactions.filter(
-            (t) => t.manual_entry || t.source === "manual_adjustment" || t.id.startsWith("manual-"),
-          )
+        ? transactions.filter((t) => isDeletableManualLedgerRow(t))
         : transactions
     const filtered = ledger.filter((transaction) => {
       const sl = deferredSearch.toLowerCase()
@@ -1220,7 +1243,7 @@ export function InteractiveTransactionsList({
           `"${t.category}"`,
           `"${t.account}"`,
           t.isIncome ? "Income" : "Expense",
-          `"${t.source === "manual_adjustment" ? "manual_adjustment" : "statement"}"`,
+          `"${transactionExportSource(t)}"`,
           `"${(t.notes || "").replace(/"/g, '""')}"`,
           `"${(t.receiptImageFileName || "").replace(/"/g, '""')}"`,
         ].join(","),
@@ -1911,9 +1934,7 @@ export function InteractiveTransactionsList({
                             onReceiptAttachmentChange={handleReceiptAttachmentChange}
                             accounts={accounts}
                             onDelete={
-                              transaction.manual_entry ||
-                              transaction.source === "manual_adjustment" ||
-                              transaction.id.startsWith("manual-")
+                              isDeletableManualLedgerRow(transaction)
                                 ? () => void onRemoveTransactions([transaction.id])
                                 : undefined
                             }

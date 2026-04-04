@@ -1,5 +1,8 @@
 export type TaxYear = 2024 | 2025
 
+/** Federal income tax filing status for standard deduction and bracket tables. */
+export type FilingStatus = "single" | "married_joint"
+
 const FEDERAL_BRACKETS_SINGLE_2024 = [
   { limit: 11600, rate: 0.10 },
   { limit: 47150, rate: 0.12 },
@@ -17,6 +20,28 @@ const FEDERAL_BRACKETS_SINGLE_2025 = [
   { limit: 197300, rate: 0.24 },
   { limit: 250525, rate: 0.32 },
   { limit: 626350, rate: 0.35 },
+  { limit: Infinity, rate: 0.37 },
+] as const
+
+/** 2025 ordinary income — married filing jointly (IRS). */
+const FEDERAL_BRACKETS_MFJ_2025 = [
+  { limit: 23850, rate: 0.10 },
+  { limit: 96950, rate: 0.12 },
+  { limit: 206700, rate: 0.22 },
+  { limit: 394600, rate: 0.24 },
+  { limit: 501050, rate: 0.32 },
+  { limit: 751600, rate: 0.35 },
+  { limit: Infinity, rate: 0.37 },
+] as const
+
+/** 2024 MFJ (approx. from IRS Rev. Proc.). */
+const FEDERAL_BRACKETS_MFJ_2024 = [
+  { limit: 23200, rate: 0.10 },
+  { limit: 94300, rate: 0.12 },
+  { limit: 201050, rate: 0.22 },
+  { limit: 383900, rate: 0.24 },
+  { limit: 487450, rate: 0.32 },
+  { limit: 731200, rate: 0.35 },
   { limit: Infinity, rate: 0.37 },
 ] as const
 
@@ -46,9 +71,23 @@ const CA_BRACKETS_SINGLE_2025 = [
   { limit: Infinity, rate: 0.133 },
 ] as const
 
-export const STANDARD_DEDUCTION: Record<TaxYear, number> = {
+/** Federal standard deduction — single. */
+export const STANDARD_DEDUCTION_SINGLE: Record<TaxYear, number> = {
   2024: 14600,
-  2025: 15000,
+  2025: 14600,
+}
+
+/** Federal standard deduction — married filing jointly. */
+export const STANDARD_DEDUCTION_MFJ: Record<TaxYear, number> = {
+  2024: 29200,
+  2025: 29200,
+}
+
+/** @deprecated Use standardDeductionFederal(year, status) */
+export const STANDARD_DEDUCTION: Record<TaxYear, number> = STANDARD_DEDUCTION_SINGLE
+
+export function standardDeductionFederal(year: TaxYear, status: FilingStatus): number {
+  return status === "married_joint" ? STANDARD_DEDUCTION_MFJ[year] : STANDARD_DEDUCTION_SINGLE[year]
 }
 
 // Simplified model: CA uses the same “standard deduction” subtraction constant in your current app-page logic.
@@ -77,6 +116,21 @@ function progressiveTaxSingle(taxableIncome: number, brackets: ReadonlyArray<{ l
 export function calculateFederalTaxSingle(taxYear: TaxYear, taxableIncome: number): number {
   const brackets = taxYear === 2024 ? FEDERAL_BRACKETS_SINGLE_2024 : FEDERAL_BRACKETS_SINGLE_2025
   return progressiveTaxSingle(taxableIncome, brackets)
+}
+
+export function calculateFederalTaxMFJ(taxYear: TaxYear, taxableIncome: number): number {
+  const brackets = taxYear === 2024 ? FEDERAL_BRACKETS_MFJ_2024 : FEDERAL_BRACKETS_MFJ_2025
+  return progressiveTaxSingle(taxableIncome, brackets)
+}
+
+export function calculateFederalTaxByFilingStatus(
+  taxYear: TaxYear,
+  taxableIncome: number,
+  status: FilingStatus,
+): number {
+  return status === "married_joint"
+    ? calculateFederalTaxMFJ(taxYear, taxableIncome)
+    : calculateFederalTaxSingle(taxYear, taxableIncome)
 }
 
 export function calculateCaliforniaTaxSingle(taxYear: TaxYear, taxableIncome: number): number {
