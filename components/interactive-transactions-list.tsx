@@ -1332,7 +1332,7 @@ export function InteractiveTransactionsList({
         doc.setPage(i)
         doc.setFontSize(7)
         doc.setTextColor(150)
-        doc.text(`DIY Bench.io | Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 7)
+        doc.text(`Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 7)
       }
 
       doc.save(`transactions-${new Date().toISOString().split("T")[0]}.pdf`)

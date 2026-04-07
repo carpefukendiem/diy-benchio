@@ -491,7 +491,6 @@ export function InteractiveReports({
       return n < 0 ? `(${str})` : str
     }
     const year = dateRange.start.slice(0, 4)
-    const footerDate = new Date().toLocaleDateString("en-US")
     const hasCostOfSales = totalCostOfSalesPL > 0
 
     const cosRows = [
@@ -525,7 +524,6 @@ table.pl { width: 100%; border-collapse: collapse; }
 .sub td { font-weight: 600; padding-top: 8px; border-top: 1px solid #bbb; }
 .tot td { font-weight: 700; padding-top: 10px; border-top: 2px solid #000; font-size: 11px; }
 .sp td { height: 10px; padding: 0; border: none; }
-.ftr { margin-top: 36px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 9px; color: #333; text-align: center; }
 </style></head><body>
 <div class="hdr">
 <div class="co">${businessName}</div>
@@ -556,7 +554,6 @@ ${opRows}
 <tr class="sp"><td colspan="2"></td></tr>
 <tr class="tot"><td>Net Profit</td><td class="amt">${fmtAmt(scheduleCNetProfit)}</td></tr>
 </table>
-<div class="ftr">DIY Bench.io • ${footerDate} • This is not tax advice.</div>
 </body></html>`
 
     const blob = new Blob([printContent], { type: "text/html;charset=utf-8" })
@@ -615,7 +612,6 @@ ${opRows}
       return n < 0 ? `(${str})` : str
     }
     const year = dateRange.start.slice(0, 4)
-    const footerDate = new Date().toLocaleDateString("en-US")
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tax Summary ${year}</title><style>
 @page { margin: 0.75in 0.85in; size: letter; }
@@ -628,7 +624,6 @@ table { width: 100%; border-collapse: collapse; }
 td { padding: 4px 0; vertical-align: top; }
 td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 16px; }
 tr.div td { padding-top: 10px; }
-.ftr { margin-top: 32px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 9px; text-align: center; color: #333; }
 </style></head><body>
 <div class="hdr">
 <div class="co">${businessName}</div>
@@ -652,7 +647,6 @@ ${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAm
 <tr class="div"><td>SEP-IRA max deferral (planning)</td><td class="amt">${fmtAmt(te.sepIraMaxDeferral)}</td></tr>
 <tr><td>Estimated federal tax saved if max SEP</td><td class="amt">${fmtAmt(te.estimatedFederalTaxSavedIfMaxSep)}</td></tr>
 </table>
-<div class="ftr">DIY Bench.io • ${footerDate} • This is not tax advice.</div>
 </body></html>`
 
     const blob = new Blob([html], { type: "text/html;charset=utf-8" })
@@ -963,7 +957,7 @@ ${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAm
             </p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 print:hidden">
           <Button variant="outline" size="sm" onClick={exportCSV}>
             <FileSpreadsheet className="h-4 w-4 mr-1" /> CSV
           </Button>
@@ -1271,7 +1265,7 @@ ${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAm
 
             {/* Capital / Financing Items */}
             {capitalItems.length > 0 && (
-              <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-950/20 dark:border-blue-800">
+              <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-950/20 dark:border-blue-800 print:hidden">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base text-blue-700 dark:text-blue-400">Capital &amp; Financing</CardTitle>
                   <p className="text-xs text-muted-foreground">Not included in Schedule C net profit.</p>
@@ -1284,7 +1278,7 @@ ${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAm
 
             {/* Personal / Non-deductible */}
             {personalItems.length > 0 && (
-              <Card className="border-muted">
+              <Card className="border-muted print:hidden">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base text-muted-foreground">Non-Deductible (Personal)</CardTitle>
                 </CardHeader>
@@ -1296,7 +1290,7 @@ ${caLLCFee > 0 ? `<tr><td>California LLC / franchise</td><td class="amt">${fmtAm
 
             {/* Transfers */}
             {transferItems.length > 0 && (
-              <Card className="border-muted">
+              <Card className="border-muted print:hidden">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base text-muted-foreground">Transfers / Owner Draws (Not on P&L)</CardTitle>
                 </CardHeader>
